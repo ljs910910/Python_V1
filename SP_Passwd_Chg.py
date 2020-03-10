@@ -75,14 +75,14 @@ cnt = 0
 while cnt < 67:
     cnt += 1
     key_press()
-    pyautogui.typewrite('k2', interval=0.1)
+    pyautogui.typewrite('id', interval=0.1)
     pyautogui.hotkey('enter')
     time.sleep(1)
-    pyautogui.typewrite('Tkdyd!@34')
+    pyautogui.typewrite('pw')
     pyautogui.hotkey('enter')
     time.sleep(2)
 
-    pyautogui.typewrite('passwd k2', interval=0.1)
+    pyautogui.typewrite('passwd id', interval=0.1)
     pyautogui.hotkey('enter')
     passwd_chg()
     capture()
@@ -93,14 +93,14 @@ while cnt < 67:
         while cnt < 73:
             cnt += 1
             key_press()
-            pyautogui.typewrite('smartpush', interval=0.1)
+            pyautogui.typewrite('id', interval=0.1)
             pyautogui.hotkey('enter')
             time.sleep(1)
-            pyautogui.typewrite('Tkdyd!@34')
+            pyautogui.typewrite('pw')
             pyautogui.hotkey('enter')
             time.sleep(2)
 
-            pyautogui.typewrite('passwd smartpush', interval=0.1)
+            pyautogui.typewrite('passwd id', interval=0.1)
             pyautogui.hotkey('enter')
             passwd_chg()
             capture()
@@ -111,14 +111,14 @@ while cnt < 67:
                 while cnt < 83:
                     cnt += 1
                     key_press()
-                    pyautogui.typewrite('sta', interval=0.1)
+                    pyautogui.typewrite('id', interval=0.1)
                     pyautogui.hotkey('enter')
                     time.sleep(1)
-                    pyautogui.typewrite('Tkdyd!@34')
+                    pyautogui.typewrite('pw')
                     pyautogui.hotkey('enter')
                     time.sleep(2)
 
-                    pyautogui.typewrite('passwd sta', interval=0.1)
+                    pyautogui.typewrite('passwd id', interval=0.1)
                     pyautogui.hotkey('enter')
                     passwd_chg()
                     capture()
