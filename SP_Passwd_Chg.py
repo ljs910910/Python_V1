@@ -26,7 +26,7 @@ def setFocus(title_reg):
     return window
 
 def IOI():
-    t = u'IOINSIGHT.*'
+    t = u'program.*'
     return setFocus(t)
 
 if __name__ == "__main__":
