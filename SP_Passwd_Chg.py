@@ -5,8 +5,10 @@ import time
 import warnings
 from PIL import ImageGrab
 
+#32bit 64bit 무시
 warnings.simplefilter('ignore', category=UserWarning)
 
+#컨트롤이 필요한 프로그램 윈도우 top으로 띄움
 def setFocus(title_reg):
     app = pwa.application.Application()
     t = title_reg
