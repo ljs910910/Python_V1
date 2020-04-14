@@ -11,7 +11,7 @@ def no_space(text):
     text2 = re.sub('\n', '', text1)
     return text2
 
-#웹 페이지 로그인
+#크롤링 시 로그인이 필요한 페이지 로그인
 driver = webdriver.Chrome(r"C:\Users\Downloads\chromedriver_win32\chromedriver.exe")
 driver.get("http://211.1.1.1/spa/account/login.do")
 driver.find_element_by_name("j_username").send_keys("we")
