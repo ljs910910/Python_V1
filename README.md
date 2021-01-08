@@ -4,7 +4,7 @@
 ### sp_maintenance_macro.py
 - 스마트푸시 정기 점검 매크로
 - 자사 특정 프로그램을 통해 서버 접속이 가능한 환경, 
-- paramiko 라이브러리로 컨트롤이 불가능하여 매크로 작성
+- paramiko 컨트롤이 불가하여 매크로 작성
 
 ### wcs_docx_auto.py
 - WCS 정기 점검 후 결과 보고서 자동화
