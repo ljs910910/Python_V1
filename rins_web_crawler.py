@@ -27,11 +27,17 @@ def create_date():
         driver.get('http://172.16.42.50/spa/admin/services/apiLog/excelDownload.do?searchResult=&apiGroupCd=&searchStDt=' + result + '&searchStHH=00&searchStMM=00&searchEdDt=' + result + '&searchEdHH=23&searchEdMM=59&logContent=')
         
 # 상용 cms 로그인
-driver = webdriver.Chrome(r'C:\Users\webiznet\Desktop\기타\chromedriver.exe')
-driver.get('http://172.16.42.50/spa/account/login.do')
-driver.find_element_by_name('j_username').send_keys('rins_admin')
-driver.find_element_by_name('j_password').send_keys('ipaleldj1!')
-driver.find_element_by_xpath("""//*[@id="loginForm"]/fieldset/p/input""").click()
+while True:
+    try:
+        driver = webdriver.Chrome(r'C:\Users\webiznet\Desktop\기타\chromedriver.exe')
+        driver.get('http://172.16.42.50/spa/account/login.do')
+        driver.find_element_by_name('j_username').send_keys('rins_admin')
+        driver.find_element_by_name('j_password').send_keys('ipaleldj1!')
+        driver.find_element_by_xpath("""//*[@id="loginForm"]/fieldset/p/input""").click()
+    except NoSuchElementException as e:
+        print('retry', e)
+        continue
+    break
 
 for k in range(-7, 0):  # 금 ~ 목 시트 생성 후, 일별 데이터 저장
     day_delta = datetime.timedelta(days=1)
