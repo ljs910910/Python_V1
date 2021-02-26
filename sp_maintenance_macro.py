@@ -50,7 +50,7 @@ def Hiware_Control():
     pyautogui.moveRel(0, 90)
     pyautogui.doubleClick()
     time.sleep(3)
-    pyautogui.typewrite('Ehdwkrrn!@34')
+    pyautogui.typewrite('Tlsehfla!@34')
     pyautogui.hotkey('enter')
     time.sleep(5)
     pyautogui.hotkey('win', 'up')
@@ -68,7 +68,7 @@ def tcom_Control():
     pyautogui.moveRel(0, 90)
     pyautogui.doubleClick()
     time.sleep(3)
-    pyautogui.typewrite('Ehdwkrrn!@34')
+    pyautogui.typewrite('Tlsehfla!@34')
     pyautogui.hotkey('enter')
     time.sleep(7)
     pyautogui.hotkey('enter')
@@ -81,6 +81,11 @@ def Capture():
     img = ImageGrab.grab()
     img.save('./sp_image/' + str(server_list) + '.png')
     time.sleep(2)
+
+def now_date():
+    now = datetime.datetime.now()
+    now_dt = now.strftime('%Y-%m-%d')
+    return now_dt
 
 def OCR():
     OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
