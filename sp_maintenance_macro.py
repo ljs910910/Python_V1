@@ -8,8 +8,6 @@ import datetime
 from PIL import Image, ImageGrab
 import pytesseract
 import re
-import openpyxl
-import cv2
 
 warnings.simplefilter('ignore', category=UserWarning)
 
@@ -83,11 +81,6 @@ def Capture():
     img = ImageGrab.grab()
     img.save('./sp_image/' + str(server_list) + '.png')
     time.sleep(2)
-
-def now_date():
-    now = datetime.datetime.now()
-    now_dt = now.strftime('%Y-%m-%d')
-    return now_dt
 
 def OCR():
     OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
