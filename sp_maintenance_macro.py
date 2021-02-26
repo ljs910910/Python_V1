@@ -8,6 +8,8 @@ import datetime
 from PIL import Image, ImageGrab
 import pytesseract
 import re
+import openpyxl
+import cv2
 
 warnings.simplefilter('ignore', category=UserWarning)
 
@@ -34,10 +36,13 @@ def IOI():
 
 if __name__ == "__main__":
     IOI()
+    find_btn = pyautogui.locateOnScreen('find_btn.png')
+    pyautogui.moveTo(find_btn)
+    pyautogui.click()
 
 def Hiware_Control():
-    btn = pyautogui.locateOnScreen('hiware.png')
-    pyautogui.moveTo(btn)
+    server_input_btn = pyautogui.locateOnScreen('server_input_btn.png')
+    pyautogui.moveTo(server_input_btn)
     pyautogui.moveRel(70, 0)
     pyautogui.click()
     pyautogui.hotkey('ctrl', 'a')
@@ -50,10 +55,12 @@ def Hiware_Control():
     pyautogui.typewrite('Ehdwkrrn!@34')
     pyautogui.hotkey('enter')
     time.sleep(5)
+    pyautogui.hotkey('win', 'up')
+    time.sleep(1)
 
-def NAS_Control():
-    btn = pyautogui.locateOnScreen('hiware.png')
-    pyautogui.moveTo(btn)
+def tcom_Control():
+    server_input_btn = pyautogui.locateOnScreen('server_input_btn.png')
+    pyautogui.moveTo(server_input_btn)
     pyautogui.moveRel(70, 0)
     pyautogui.click()
     pyautogui.hotkey('ctrl', 'a')
@@ -69,6 +76,24 @@ def NAS_Control():
     pyautogui.hotkey('enter')
     time.sleep(1)
     pyautogui.hotkey('enter')
+    pyautogui.hotkey('win', 'up')
+    time.sleep(1)
+
+def Capture():
+    img = ImageGrab.grab()
+    img.save('./sp_image/' + str(server_list) + '.png')
+    time.sleep(2)
+
+def now_date():
+    now = datetime.datetime.now()
+    now_dt = now.strftime('%Y-%m-%d')
+    return now_dt
+
+def OCR():
+    OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
+    Catch = re.search('$', OCR)
+    print(Catch)
+    return Catch
 
 try:
     if not (os.path.isdir('sp_image')):
@@ -78,16 +103,6 @@ except OSError as e:
         print('fail')
         exit()
 
-def Capture():
-    img = ImageGrab.grab()
-    img.save('./sp_image/' + str(server_list) + '.png')
-    time.sleep(3)
-
-def now_date():
-    now = datetime.datetime.now()
-    now_dt = now.strftime('%Y-%m-%d')
-    return now_dt
-
 f1 = open('serverlist.txt', 'r')
 
 cnt = 0
@@ -96,12 +111,8 @@ while cnt < 15:
     server_list = f1.readline().rstrip()
     print(server_list)
     Hiware_Control()
-    pyautogui.hotkey('win', 'up')
-    time.sleep(1)
     Capture()
-    OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
-    Catch = re.search('$', OCR)
-    if Catch is not None:
+    if OCR() is not None:
         print('login success')
         time.sleep(1)
         pyautogui.typewrite('tail -f /home/server/spps/logs/SPPS_J_0.log.' + now_date())
@@ -118,6 +129,8 @@ while cnt < 15:
         time.sleep(2)
     else:
         print('not match, error')
+        pyautogui.typewrite('exit')
+        pyautogui.hotkey('enter')
         break
     if cnt == 15:
         while cnt < 28:
@@ -125,12 +138,8 @@ while cnt < 15:
             server_list = f1.readline().rstrip()
             print(server_list)
             Hiware_Control()
-            pyautogui.hotkey('win', 'up')
-            time.sleep(1)
             Capture()
-            OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
-            Catch = re.search('$', OCR)
-            if Catch is not None:
+            if OCR() is not None:
                 print('login success')
                 time.sleep(1)
                 pyautogui.typewrite('tail -f /home/server/spps/logs/WS_SPPS_J_0.log.' + now_date())
@@ -147,6 +156,8 @@ while cnt < 15:
                 time.sleep(2)
             else:
                 print('not match, error')
+                pyautogui.typewrite('exit')
+                pyautogui.hotkey('enter')
                 break
             if cnt == 28:
                 while cnt < 36:
@@ -154,12 +165,8 @@ while cnt < 15:
                     server_list = f1.readline().rstrip()
                     print(server_list)
                     Hiware_Control()
-                    pyautogui.hotkey('win', 'up')
-                    time.sleep(1)
                     Capture()
-                    OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
-                    Catch = re.search('$', OCR)
-                    if Catch is not None:
+                    if OCR() is not None:
                         print('login success')
                         time.sleep(1)
                         pyautogui.typewrite('/home/server/mysql/bin/mysql -u root -p')
@@ -180,6 +187,8 @@ while cnt < 15:
                         time.sleep(2)
                     else:
                         print('not match, error')
+                        pyautogui.typewrite('exit')
+                        pyautogui.hotkey('enter')
                         break
                     if cnt == 36:
                         while cnt < 41:
@@ -187,12 +196,8 @@ while cnt < 15:
                             server_list = f1.readline().rstrip()
                             print(server_list)
                             Hiware_Control()
-                            pyautogui.hotkey('win', 'up')
-                            time.sleep(1)
                             Capture()
-                            OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
-                            Catch = re.search('$', OCR)
-                            if Catch is not None:
+                            if OCR() is not None:
                                 print('login success')
                                 time.sleep(1)
                                 pyautogui.typewrite('tail -f /home/server/tomcat/logs/spcs/spcs.' + now_date() + '.log')
@@ -209,6 +214,8 @@ while cnt < 15:
                                 time.sleep(2)
                             else:
                                 print('not match, error')
+                                pyautogui.typewrite('exit')
+                                pyautogui.hotkey('enter')
                                 break
                             if cnt == 41:
                                 while cnt < 43:
@@ -216,12 +223,8 @@ while cnt < 15:
                                     server_list = f1.readline().rstrip()
                                     print(server_list)
                                     Hiware_Control()
-                                    pyautogui.hotkey('win', 'up')
-                                    time.sleep(1)
                                     Capture()
-                                    OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
-                                    Catch = re.search('$', OCR)
-                                    if Catch is not None:
+                                    if OCR() is not None:
                                         print('login success')
                                         time.sleep(1)
                                         pyautogui.typewrite('tail -f /home/server/tomcat/logs/spns/spns.' + now_date() + '.log')
@@ -238,19 +241,17 @@ while cnt < 15:
                                         time.sleep(2)
                                     else:
                                         print('not match, error')
+                                        pyautogui.typewrite('exit')
+                                        pyautogui.hotkey('enter')
                                         break
                                     if cnt == 43:
                                         while cnt < 47:
                                             cnt += 1
                                             server_list = f1.readline().rstrip()
                                             print(server_list)
-                                            NAS_Control()
-                                            pyautogui.hotkey('win', 'up')
-                                            time.sleep(1)
+                                            tcom_Control()
                                             Capture()
-                                            OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
-                                            Catch = re.search('$', OCR)
-                                            if Catch is not None:
+                                            if OCR() is not None:
                                                 print('login success')
                                                 time.sleep(1)
                                                 pyautogui.typewrite('tail -50f /home/server/tomcat/logs/spis.log')
@@ -270,19 +271,17 @@ while cnt < 15:
                                                 time.sleep(2)
                                             else:
                                                 print('not match, error')
+                                                pyautogui.typewrite('exit')
+                                                pyautogui.hotkey('enter')
                                                 break
                                             if cnt == 47:
                                                 while cnt < 49:
                                                     cnt += 1
                                                     server_list = f1.readline().rstrip()
                                                     print(server_list)
-                                                    NAS_Control()
-                                                    pyautogui.hotkey('win', 'up')
-                                                    time.sleep(1)
+                                                    tcom_Control()
                                                     Capture()
-                                                    OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
-                                                    Catch = re.search('$', OCR)
-                                                    if Catch is not None:
+                                                    if OCR() is not None:
                                                         print('login success')
                                                         time.sleep(1)
                                                         pyautogui.typewrite('tail -100f /home/server/tomcat/logs/batch.log')
@@ -299,6 +298,8 @@ while cnt < 15:
                                                         time.sleep(2)
                                                     else:
                                                         print('not match, error')
+                                                        pyautogui.typewrite('exit')
+                                                        pyautogui.hotkey('enter')
                                                         break
                                                     if cnt == 49:
                                                         print('****maintenance finish****')
