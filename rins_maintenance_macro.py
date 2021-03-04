@@ -124,7 +124,7 @@ def rins_pw():
     pyautogui.typewrite('ssh rinsop@' + rins_server_list)
     pyautogui.hotkey('enter')
     time.sleep(1)
-    pyautogui.typewrite('3!aleldj')
+    pyautogui.typewrite('passwd')
     pyautogui.hotkey('enter')
     time.sleep(1)
     pyautogui.typewrite('clear')
@@ -368,7 +368,7 @@ while cnt < 1:
                                                                 pyautogui.typewrite('su -')
                                                                 pyautogui.hotkey('enter')
                                                                 time.sleep(1)
-                                                                pyautogui.typewrite('3!tkaqnsrl')
+                                                                pyautogui.typewrite('passwd')
                                                                 pyautogui.hotkey('enter')
                                                                 time.sleep(1)
                                                                 pyautogui.typewrite('su - mysql')
@@ -424,15 +424,15 @@ def create_date():
         load_ws2[cell.pop()] = result
 
         # 금 ~ 목 API 이력관리 엑셀 파일 다운
-        driver.get('http://172.16.42.50/spa/admin/services/apiLog/excelDownload.do?searchResult=&apiGroupCd=&searchStDt=' + result + '&searchStHH=00&searchStMM=00&searchEdDt=' + result + '&searchEdHH=23&searchEdMM=59&logContent=')
+        driver.get('http://172.16.1.1/spa/admin/services/apiLog/excelDownload.do?searchResult=&apiGroupCd=&searchStDt=' + result + '&searchStHH=00&searchStMM=00&searchEdDt=' + result + '&searchEdHH=23&searchEdMM=59&logContent=')
 
 # 상용 cms 로그인
 while True:
     try:
         driver = webdriver.Chrome(r'C:\Users\webiznet\Desktop\기타\chromedriver.exe')
-        driver.get('http://172.16.42.50/spa/account/login.do')
-        driver.find_element_by_name('j_username').send_keys('rins_admin')
-        driver.find_element_by_name('j_password').send_keys('ipaleldj1!')
+        driver.get('http://172.16.1.1/spa/account/login.do')
+        driver.find_element_by_name('j_username').send_keys('admin')
+        driver.find_element_by_name('j_password').send_keys('passwd')
         driver.find_element_by_xpath("""//*[@id="loginForm"]/fieldset/p/input""").click()
 
         for k in range(-7, 0):  # 금 ~ 목 시트 생성 후, 일별 데이터 저장
@@ -442,7 +442,7 @@ while True:
             result = a_week_ago.strftime('%Y%m%d')
             load_wb.create_sheet(index=1, title=result)
             load_ws = load_wb[result]
-            driver.get('http://172.16.42.50/spa/admin/mng/pushmng/timetraffic.ajax?searchDt=' + str(result))
+            driver.get('http://172.16.1.1/spa/admin/mng/pushmng/timetraffic.ajax?searchDt=' + str(result))
             html = driver.page_source
             soup = BeautifulSoup(html, 'html.parser')
             time.sleep(1)
@@ -475,6 +475,7 @@ while True:
     except NoSuchElementException as e:
         print('retry', e)
         continue
+        
     break
 
 create_date()
