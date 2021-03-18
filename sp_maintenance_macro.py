@@ -50,7 +50,7 @@ def Hiware_Control():
     pyautogui.moveRel(0, 90)
     pyautogui.doubleClick()
     time.sleep(3)
-    pyautogui.typewrite('Tlsehfla!@34')
+    pyautogui.typewrite('passwd')
     pyautogui.hotkey('enter')
     time.sleep(5)
     pyautogui.hotkey('win', 'up')
