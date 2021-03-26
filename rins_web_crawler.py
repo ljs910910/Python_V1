@@ -9,6 +9,9 @@ load_wb = openpyxl.Workbook()
 load_ws = load_wb.active
 load_wb.create_sheet(index=1, title='total_sheet')
 
+#-------------------------------------------------------------------------------
+# total_sheet 시트에 금~목 날짜 셀 생성
+#-------------------------------------------------------------------------------
 def create_date():
     cell = ['G1', 'F1', 'E1', 'D1', 'C1', 'B1', 'A1']
     for i in range(-7, 0):
@@ -25,9 +28,9 @@ def create_date():
 while True:
     try:
         # 상용 cms 로그인
-        driver = webdriver.Chrome(r'C:\Users\webiznet\Desktop\기타\chromedriver.exe')
+        driver = webdriver.Chrome(r'C:\Users\user\Desktop\기타\chromedriver.exe')
         driver.get('http://172.16.1.1/spa/account/login.do')
-        driver.find_element_by_name('j_username').send_keys('id')
+        driver.find_element_by_name('j_username').send_keys('admin')
         driver.find_element_by_name('j_password').send_keys('passwd')
         driver.find_element_by_xpath("""//*[@id="loginForm"]/fieldset/p/input""").click()
 
