@@ -10,6 +10,9 @@ import pytesseract
 import re
 import cv2
 
+#-------------------------------------------------------------------------------
+# TACS Focus
+#-------------------------------------------------------------------------------
 warnings.simplefilter('ignore', category=UserWarning)
 
 def setFocus(title_reg):
@@ -33,7 +36,10 @@ def IOI():
     t = u'STGClient.*'
     return setFocus(t)
 
-if __name__ == "__main__":
+#-------------------------------------------------------------------------------
+# TACS Control
+#-------------------------------------------------------------------------------
+def TACS_Control():
     IOI()
     rins_find_btn = pyautogui.locateOnScreen('rins_find_btn.png')
     pyautogui.moveTo(rins_find_btn)
@@ -41,8 +47,6 @@ if __name__ == "__main__":
     pyautogui.click()
     pyautogui.hotkey('enter')
     time.sleep(1)
-
-def TACS_Control():
     rins_find_btn1 = pyautogui.locateOnScreen('rins_find_btn1.png')
     pyautogui.moveTo(rins_find_btn1)
     pyautogui.moveRel(122, 0)
@@ -83,6 +87,9 @@ def TACS_Control():
     pyautogui.click()
     time.sleep(1)
 
+# -------------------------------------------------------------------------------
+# capture
+# -------------------------------------------------------------------------------
 def Capture():
     img = ImageGrab.grab()
     img.save('./rins_image/' + str(rins_server_list1) + '.png')
@@ -93,11 +100,17 @@ def DB_Capture():
     img.save('./rins_image/' + str(rins_server_list2) + '.png')
     time.sleep(2)
 
+# -------------------------------------------------------------------------------
+# date
+# -------------------------------------------------------------------------------
 def now_date():
     now = datetime.datetime.now()
     now_dt = now.strftime('%Y-%m-%d')
     return now_dt
 
+# -------------------------------------------------------------------------------
+# OCR
+# -------------------------------------------------------------------------------
 def img_modify():
     # hostname_img = cv2.imread('./rins_image/' + str(rins_server_list1) + '.png', cv2.IMREAD_COLOR)
     hostname_img = cv2.imread('./rins_image/' + str(rins_server_list1) + '.png')
@@ -116,6 +129,9 @@ def OCR():
     print(Catch)
     return Catch
 
+# -------------------------------------------------------------------------------
+# rins pw
+# -------------------------------------------------------------------------------
 def rins_pw():
     pyautogui.typewrite('ssh rinsop@' + rins_server_list)
     pyautogui.hotkey('enter')
@@ -126,6 +142,9 @@ def rins_pw():
     pyautogui.typewrite('clear')
     pyautogui.hotkey('enter')
 
+# -------------------------------------------------------------------------------
+# create dir
+# -------------------------------------------------------------------------------
 try:
     if not (os.path.isdir('rins_image')):
         os.makedirs(os.path.join('rins_image'))
@@ -139,6 +158,9 @@ f2 = open('rins_server_list1.txt', 'r')
 f3 = open('rins_server_list2.txt', 'r')
 f4 = open('rins_server_list3.txt', 'r')
 
+# -------------------------------------------------------------------------------
+# 서버 점검
+# -------------------------------------------------------------------------------
 cnt = 0
 while cnt < 1:
     cnt += 1
@@ -432,4 +454,3 @@ while cnt < 1:
                                                             if cnt == 21:
                                                                 break
 f1.close(); f2.close(); f3.close(); f4.close()
-
