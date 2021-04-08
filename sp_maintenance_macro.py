@@ -11,6 +11,9 @@ import re
 
 warnings.simplefilter('ignore', category=UserWarning)
 
+#-------------------------------------------------------------------------------
+# TACS Focus
+#-------------------------------------------------------------------------------
 def setFocus(title_reg):
     app = pwa.application.Application()
     t = title_reg
@@ -38,6 +41,9 @@ if __name__ == "__main__":
     pyautogui.moveTo(find_btn)
     pyautogui.click()
 
+#-------------------------------------------------------------------------------
+# HIWARE Control
+#-------------------------------------------------------------------------------
 def Hiware_Control():
     server_input_btn = pyautogui.locateOnScreen('server_input_btn.png')
     pyautogui.moveTo(server_input_btn)
@@ -49,8 +55,8 @@ def Hiware_Control():
     time.sleep(1)
     pyautogui.moveRel(0, 90)
     pyautogui.doubleClick()
-    time.sleep(3)
-    pyautogui.typewrite('passwd')
+    time.sleep(4)
+    pyautogui.typewrite('Tlsehfla!@34')
     pyautogui.hotkey('enter')
     time.sleep(5)
     pyautogui.hotkey('win', 'up')
@@ -67,8 +73,8 @@ def tcom_Control():
     time.sleep(1)
     pyautogui.moveRel(0, 90)
     pyautogui.doubleClick()
-    time.sleep(3)
-    pyautogui.typewrite('passwd')
+    time.sleep(4)
+    pyautogui.typewrite('Tlsehfla!@34')
     pyautogui.hotkey('enter')
     time.sleep(7)
     pyautogui.hotkey('enter')
@@ -77,22 +83,34 @@ def tcom_Control():
     pyautogui.hotkey('win', 'up')
     time.sleep(1)
 
+# -------------------------------------------------------------------------------
+# capture
+# -------------------------------------------------------------------------------
 def Capture():
     img = ImageGrab.grab()
     img.save('./sp_image/' + str(server_list) + '.png')
     time.sleep(2)
 
+# -------------------------------------------------------------------------------
+# date
+# -------------------------------------------------------------------------------
 def now_date():
     now = datetime.datetime.now()
     now_dt = now.strftime('%Y-%m-%d')
     return now_dt
 
+# -------------------------------------------------------------------------------
+# OCR
+# -------------------------------------------------------------------------------
 def OCR():
     OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
     Catch = re.search('$', OCR)
     print(Catch)
     return Catch
 
+# -------------------------------------------------------------------------------
+# create dir
+# -------------------------------------------------------------------------------
 try:
     if not (os.path.isdir('sp_image')):
         os.makedirs(os.path.join('sp_image'))
@@ -103,6 +121,9 @@ except OSError as e:
 
 f1 = open('serverlist.txt', 'r')
 
+# -------------------------------------------------------------------------------
+# 서버 점검
+# -------------------------------------------------------------------------------
 cnt = 0
 while cnt < 15:
     cnt += 1
@@ -113,7 +134,7 @@ while cnt < 15:
     if OCR() is not None:
         print('login success')
         time.sleep(1)
-        pyautogui.typewrite('tail -f /home/server/spps/logs/SPPS_J_0.log.' + now_date())
+        pyautogui.typewrite('cat /home/server/spps/logs/SPPS_J_0.log.' + now_date() + '| grep -i \'exception\' ')
         pyautogui.hotkey('enter')
         time.sleep(5)
         pyautogui.hotkey('ctrl', 'c')
@@ -140,7 +161,7 @@ while cnt < 15:
             if OCR() is not None:
                 print('login success')
                 time.sleep(1)
-                pyautogui.typewrite('tail -f /home/server/spps/logs/WS_SPPS_J_0.log.' + now_date())
+                pyautogui.typewrite('cat /home/server/spps/logs/WS_SPPS_J_0.log.' + now_date() + '| grep -i \'exception\' ')
                 pyautogui.hotkey('enter')
                 time.sleep(5)
                 pyautogui.hotkey('ctrl', 'c')
