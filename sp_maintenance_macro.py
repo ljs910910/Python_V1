@@ -1,18 +1,15 @@
 import pywinauto as pwa
 import pyautogui
-import os
-import time
-import warnings
-import errno
-import datetime
-from PIL import Image, ImageGrab
-import pytesseract
-import re
+import os, time, errno, warnings, datetime
+from PIL import ImageGrab
+from datetime import date, timedelta
+#import pytesseract
+#import re
 
 warnings.simplefilter('ignore', category=UserWarning)
 
 #-------------------------------------------------------------------------------
-# TACS Focus
+# HIWARE Focus
 #-------------------------------------------------------------------------------
 def setFocus(title_reg):
     app = pwa.application.Application()
@@ -94,19 +91,24 @@ def Capture():
 # -------------------------------------------------------------------------------
 # date
 # -------------------------------------------------------------------------------
-def now_date():
+def today():
     now = datetime.datetime.now()
     now_dt = now.strftime('%Y-%m-%d')
     return now_dt
 
+def yesterday():
+    yesterday1 = date.today() - timedelta(1)
+    yesterday2 = yesterday1.strftime('%Y-%m-%d')
+    return yesterday2
+
 # -------------------------------------------------------------------------------
 # OCR
 # -------------------------------------------------------------------------------
-def OCR():
-    OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
-    Catch = re.search('$', OCR)
-    print(Catch)
-    return Catch
+# def OCR():
+#     OCR = pytesseract.image_to_string(Image.open('./sp_image/' + server_list + '.png'))
+#     Catch = re.search('$', OCR)
+#     print(Catch)
+#     return Catch
 
 # -------------------------------------------------------------------------------
 # create dir
@@ -130,196 +132,183 @@ while cnt < 15:
     server_list = f1.readline().rstrip()
     print(server_list)
     Hiware_Control()
+    time.sleep(1)
+    pyautogui.typewrite('tail -f /home/server/spps/logs/SPPS_J_0.log.' + today())
+    pyautogui.hotkey('enter')
+    time.sleep(15)
+    pyautogui.hotkey('ctrl', 'c')
+    time.sleep(1)
+    pyautogui.typewrite('cat /home/server/spps/logs/SPPS_J_0.log.' + today() + '| grep -i \'exception\' | grep -v \'CLUSTERDOWN The cluster is down\' ')
+    pyautogui.hotkey('enter')
+    time.sleep(5)
+    pyautogui.hotkey('ctrl', 'c')
+    time.sleep(1)
+    pyautogui.typewrite('date; mpstat | tail -1 | awk \'{print 100-$NF}\'; free -m; df -h')
+    pyautogui.hotkey('enter')
+    time.sleep(2)
     Capture()
-    if OCR() is not None:
-        print('login success')
-        time.sleep(1)
-        pyautogui.typewrite('cat /home/server/spps/logs/SPPS_J_0.log.' + now_date() + '| grep -i \'exception\' ')
-        pyautogui.hotkey('enter')
-        time.sleep(5)
-        pyautogui.hotkey('ctrl', 'c')
-        time.sleep(1)
-        pyautogui.typewrite('date; mpstat | tail -1 | awk \'{print 100-$NF}\'; free -m; df -h')
-        pyautogui.hotkey('enter')
-        time.sleep(2)
-        Capture()
-        pyautogui.typewrite('exit')
-        pyautogui.hotkey('enter')
-        time.sleep(2)
-    else:
-        print('not match, error')
-        pyautogui.typewrite('exit')
-        pyautogui.hotkey('enter')
-        break
+    pyautogui.typewrite('exit')
+    pyautogui.hotkey('enter')
+    time.sleep(2)
     if cnt == 15:
         while cnt < 28:
             cnt += 1
             server_list = f1.readline().rstrip()
             print(server_list)
             Hiware_Control()
+            time.sleep(1)
+            pyautogui.typewrite('tail -f /home/server/spps/logs/WS_SPPS_J_0.log.' + today())
+            pyautogui.hotkey('enter')
+            time.sleep(15)
+            pyautogui.hotkey('ctrl', 'c')
+            time.sleep(1)
+            pyautogui.typewrite('cat /home/server/spps/backup/logs/' + yesterday() + '.txt')
+            pyautogui.hotkey('enter')
+            time.sleep(3)
+            pyautogui.typewrite('date; mpstat | tail -1 | awk \'{print 100-$NF}\'; free -m; df -h')
+            pyautogui.hotkey('enter')
+            time.sleep(2)
             Capture()
-            if OCR() is not None:
-                print('login success')
-                time.sleep(1)
-                pyautogui.typewrite('cat /home/server/spps/logs/WS_SPPS_J_0.log.' + now_date() + '| grep -i \'exception\' ')
-                pyautogui.hotkey('enter')
-                time.sleep(5)
-                pyautogui.hotkey('ctrl', 'c')
-                time.sleep(1)
-                pyautogui.typewrite('date; mpstat | tail -1 | awk \'{print 100-$NF}\'; free -m; df -h')
-                pyautogui.hotkey('enter')
-                time.sleep(2)
-                Capture()
-                pyautogui.typewrite('exit')
-                pyautogui.hotkey('enter')
-                time.sleep(2)
-            else:
-                print('not match, error')
-                pyautogui.typewrite('exit')
-                pyautogui.hotkey('enter')
-                break
+            pyautogui.typewrite('exit')
+            pyautogui.hotkey('enter')
+            time.sleep(2)
             if cnt == 28:
                 while cnt < 36:
                     cnt += 1
                     server_list = f1.readline().rstrip()
                     print(server_list)
                     Hiware_Control()
+                    time.sleep(1)
+                    pyautogui.typewrite('/home/server/mysql/bin/mysql -u root -p')
+                    pyautogui.hotkey('enter')
+                    time.sleep(1)
+                    pyautogui.typewrite('k2k@admin')
+                    pyautogui.hotkey('enter')
+                    time.sleep(1)
+                    pyautogui.typewrite('show slave status\G;')
+                    pyautogui.hotkey('enter')
+                    time.sleep(1)
                     Capture()
-                    if OCR() is not None:
-                        print('login success')
-                        time.sleep(1)
-                        pyautogui.typewrite('/home/server/mysql/bin/mysql -u root -p')
-                        pyautogui.hotkey('enter')
-                        time.sleep(1)
-                        pyautogui.typewrite('passwd')
-                        pyautogui.hotkey('enter')
-                        time.sleep(1)
-                        pyautogui.typewrite('show slave status\G;')
-                        pyautogui.hotkey('enter')
-                        time.sleep(1)
-                        Capture()
-                        pyautogui.typewrite('exit')
-                        pyautogui.hotkey('enter')
-                        time.sleep(1)
-                        pyautogui.typewrite('exit')
-                        pyautogui.hotkey('enter')
-                        time.sleep(2)
-                    else:
-                        print('not match, error')
-                        pyautogui.typewrite('exit')
-                        pyautogui.hotkey('enter')
-                        break
+                    pyautogui.typewrite('exit')
+                    pyautogui.hotkey('enter')
+                    time.sleep(1)
+                    pyautogui.typewrite('exit')
+                    pyautogui.hotkey('enter')
+                    time.sleep(2)
                     if cnt == 36:
                         while cnt < 41:
                             cnt += 1
                             server_list = f1.readline().rstrip()
                             print(server_list)
                             Hiware_Control()
+                            time.sleep(1)
+                            pyautogui.hotkey('ctrl', 'u')
+                            time.sleep(1)
+                            pyautogui.typewrite('tail -f /home/server/tomcat/logs/spcs/spcs.' + today() + '.log')
+                            pyautogui.hotkey('enter')
+                            time.sleep(10)
+                            pyautogui.hotkey('ctrl', 'c')
+                            time.sleep(1)
+                            pyautogui.typewrite('cat /home/server/tomcat/logs/spcs/spcs.' + today() + '.log' + '| grep -i \'exception\' | grep -v \'CLUSTERDOWN The cluster is down\' ')
+                            pyautogui.hotkey('enter')
+                            time.sleep(20)
+                            pyautogui.hotkey('ctrl', 'c')
+                            pyautogui.typewrite('date; mpstat | tail -1 | awk \'{print 100-$NF}\'; free -m; df -h')
+                            pyautogui.hotkey('enter')
+                            time.sleep(2)
                             Capture()
-                            if OCR() is not None:
-                                print('login success')
-                                time.sleep(1)
-                                pyautogui.typewrite('tail -f /home/server/tomcat/logs/spcs/spcs.' + now_date() + '.log')
-                                pyautogui.hotkey('enter')
-                                time.sleep(5)
-                                pyautogui.hotkey('ctrl', 'c')
-                                time.sleep(1)
-                                pyautogui.typewrite('date; mpstat | tail -1 | awk \'{print 100-$NF}\'; free -m; df -h')
-                                pyautogui.hotkey('enter')
-                                time.sleep(2)
-                                Capture()
-                                pyautogui.typewrite('exit')
-                                pyautogui.hotkey('enter')
-                                time.sleep(2)
-                            else:
-                                print('not match, error')
-                                pyautogui.typewrite('exit')
-                                pyautogui.hotkey('enter')
-                                break
+                            pyautogui.typewrite('exit')
+                            pyautogui.hotkey('enter')
+                            time.sleep(2)
                             if cnt == 41:
                                 while cnt < 43:
                                     cnt += 1
                                     server_list = f1.readline().rstrip()
                                     print(server_list)
                                     Hiware_Control()
+                                    pyautogui.hotkey('ctrl', 'u')
+                                    time.sleep(1)
+                                    time.sleep(1)
+                                    pyautogui.typewrite('tail -f /home/server/tomcat/logs/spns/spns.' + today() + '.log')
+                                    pyautogui.hotkey('enter')
+                                    time.sleep(5)
+                                    pyautogui.hotkey('ctrl', 'c')
+                                    time.sleep(1)
+
+                                    pyautogui.typewrite('cat /home/server/tomcat/logs/spns/spns.' + today() + '.log' + '| grep -i \'exception\' | grep -v \'HTTP Status 404\' ')
+                                    pyautogui.hotkey('enter')
+                                    time.sleep(5)
+                                    pyautogui.hotkey('ctrl', 'c')
+                                    time.sleep(1)
+
+                                    pyautogui.typewrite('cat /home/server/tomcat/logs/spns/spns.' + yesterday() + '.log' + '| grep -i \'exception\' | grep -v \'HTTP Status 404\' ')
+                                    pyautogui.hotkey('enter')
+                                    time.sleep(5)
+                                    pyautogui.hotkey('ctrl', 'c')
+                                    time.sleep(1)
+
+                                    pyautogui.typewrite('date; mpstat | tail -1 | awk \'{print 100-$NF}\'; free -m; df -h')
+                                    pyautogui.hotkey('enter')
+                                    time.sleep(2)
                                     Capture()
-                                    if OCR() is not None:
-                                        print('login success')
-                                        time.sleep(1)
-                                        pyautogui.typewrite('tail -f /home/server/tomcat/logs/spns/spns.' + now_date() + '.log')
-                                        pyautogui.hotkey('enter')
-                                        time.sleep(5)
-                                        pyautogui.hotkey('ctrl', 'c')
-                                        time.sleep(1)
-                                        pyautogui.typewrite('date; mpstat | tail -1 | awk \'{print 100-$NF}\'; free -m; df -h')
-                                        pyautogui.hotkey('enter')
-                                        time.sleep(2)
-                                        Capture()
-                                        pyautogui.typewrite('exit')
-                                        pyautogui.hotkey('enter')
-                                        time.sleep(2)
-                                    else:
-                                        print('not match, error')
-                                        pyautogui.typewrite('exit')
-                                        pyautogui.hotkey('enter')
-                                        break
+                                    pyautogui.typewrite('exit')
+                                    pyautogui.hotkey('enter')
+                                    time.sleep(2)
                                     if cnt == 43:
                                         while cnt < 47:
                                             cnt += 1
                                             server_list = f1.readline().rstrip()
                                             print(server_list)
                                             tcom_Control()
+                                            time.sleep(1)
+                                            pyautogui.hotkey('ctrl', 'u')
+                                            time.sleep(1)
+                                            pyautogui.typewrite('tail -50f /home/server/tomcat/logs/spis.log')
+                                            pyautogui.hotkey('enter')
+                                            time.sleep(5)
+                                            pyautogui.hotkey('ctrl', 'c')
+                                            pyautogui.hotkey('ctrl', 'u')
+                                            time.sleep(1)
+                                            pyautogui.typewrite('tail -50f /home/server/tomcat/logs/trp/trp.' + today() + '.log')
+                                            pyautogui.hotkey('enter')
+                                            time.sleep(5)
+                                            pyautogui.hotkey('ctrl', 'c')
+                                            pyautogui.hotkey('ctrl', 'u')
+                                            time.sleep(1)
+                                            pyautogui.typewrite('date; mpstat | tail -1 | awk \'{print 100-$NF}\'; free -m; df -h')
+                                            pyautogui.hotkey('enter')
+                                            time.sleep(2)
                                             Capture()
-                                            if OCR() is not None:
-                                                print('login success')
-                                                time.sleep(1)
-                                                pyautogui.typewrite('tail -50f /home/server/tomcat/logs/spis.log')
-                                                pyautogui.hotkey('enter')
-                                                time.sleep(5)
-                                                pyautogui.hotkey('ctrl', 'c')
-                                                pyautogui.typewrite('tail -50f /home/server/tomcat/logs/trp/trp.' + now_date() + '.log')
-                                                pyautogui.hotkey('enter')
-                                                time.sleep(5)
-                                                pyautogui.hotkey('ctrl', 'c')
-                                                pyautogui.typewrite('date; mpstat | tail -1 | awk \'{print 100-$NF}\'; free -m; df -h')
-                                                pyautogui.hotkey('enter')
-                                                time.sleep(2)
-                                                Capture()
-                                                pyautogui.typewrite('exit')
-                                                pyautogui.hotkey('enter')
-                                                time.sleep(2)
-                                            else:
-                                                print('not match, error')
-                                                pyautogui.typewrite('exit')
-                                                pyautogui.hotkey('enter')
-                                                break
+                                            pyautogui.typewrite('exit')
+                                            pyautogui.hotkey('enter')
+                                            time.sleep(2)
                                             if cnt == 47:
                                                 while cnt < 49:
                                                     cnt += 1
                                                     server_list = f1.readline().rstrip()
                                                     print(server_list)
                                                     tcom_Control()
+                                                    time.sleep(1)
+                                                    pyautogui.typewrite('vi /home/server/tomcat/logs/batch-error.log')
+                                                    pyautogui.hotkey('enter')
+                                                    time.sleep(1)
+                                                    pyautogui.typewrite('gg')
+                                                    time.sleep(4)
+                                                    for batch_cnt in range(0, 9):
+                                                        batch_cnt = pyautogui.hotkey('ctrl', 'f')
+                                                        time.sleep(4)
+                                                    pyautogui.hotkey('shift', ':')
+                                                    time.sleep(1)
+                                                    pyautogui.typewrite('q!')
+                                                    pyautogui.hotkey('enter')
+                                                    time.sleep(1)
+                                                    pyautogui.typewrite('date; mpstat | tail -1 | awk \'{print 100-$NF}\'; free -m; df -h')
+                                                    pyautogui.hotkey('enter')
+                                                    time.sleep(2)
                                                     Capture()
-                                                    if OCR() is not None:
-                                                        print('login success')
-                                                        time.sleep(1)
-                                                        pyautogui.typewrite('tail -100f /home/server/tomcat/logs/batch.log')
-                                                        pyautogui.hotkey('enter')
-                                                        time.sleep(5)
-                                                        pyautogui.hotkey('ctrl', 'c')
-                                                        time.sleep(1)
-                                                        pyautogui.typewrite('date; mpstat | tail -1 | awk \'{print 100-$NF}\'; free -m; df -h')
-                                                        pyautogui.hotkey('enter')
-                                                        time.sleep(2)
-                                                        Capture()
-                                                        pyautogui.typewrite('exit')
-                                                        pyautogui.hotkey('enter')
-                                                        time.sleep(2)
-                                                    else:
-                                                        print('not match, error')
-                                                        pyautogui.typewrite('exit')
-                                                        pyautogui.hotkey('enter')
-                                                        break
+                                                    pyautogui.typewrite('exit')
+                                                    pyautogui.hotkey('enter')
+                                                    time.sleep(2)
                                                     if cnt == 49:
                                                         print('****maintenance finish****')
                                                         break
