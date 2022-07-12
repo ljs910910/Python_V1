@@ -22,7 +22,7 @@ def create_date():
 
         # 금 ~ 목 API 이력관리 엑셀 파일 다운
         driver.get(
-            'http://172.16.42.50/spa/admin/services/apiLog/excelDownload.do?searchResult=&apiGroupCd=&searchStDt=' \
+            'http://172.1.1.1/spa/admin/services/apiLog/excelDownload.do?searchResult=&apiGroupCd=&searchStDt=' \
             + result + '&searchStHH=00&searchStMM=00&searchEdDt=' + result + '&searchEdHH=23&searchEdMM=59&logContent=')
 
 while True:
@@ -30,8 +30,8 @@ while True:
         # 상용 cms 로그인
         driver = webdriver.Chrome(r'D:\chromedriver\chromedriver.exe')
         driver.get('http://172.16.42.50/spa/account/login.do')
-        driver.find_element_by_name('j_username').send_keys('rins_admin')
-        driver.find_element_by_name('j_password').send_keys('ipaleldj1!')
+        driver.find_element_by_name('j_username').send_keys('ip')
+        driver.find_element_by_name('j_password').send_keys('passwd')
         driver.find_element_by_xpath("""//*[@id="loginForm"]/fieldset/p/input""").click()
 
         for k in range(-7, 0):  # 금 ~ 목 시트 생성 후, 일별 데이터 저장
