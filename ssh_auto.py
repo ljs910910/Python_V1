@@ -26,7 +26,7 @@ def ssh_auto():
                     print(line2)
                 f2 = open('ssh_command.txt', 'r')
 
-        except TimeoutError as e:  # 서버 연결 안될 경우 해당 서버는 패스
+        except TimeoutError as e:  # 커넥션 타임 아웃 시 해당 서버는 패스
             print('**' + line1 + '**' ' connection time out, pass ', e)
             pass; continue
 
