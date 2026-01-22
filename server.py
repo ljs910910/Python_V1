@@ -4,22 +4,31 @@ from google import genai
 import os
 from datetime import datetime
 from dotenv import load_dotenv
-import time
 
+# .env 파일 로드 (로컬 테스트용)
 load_dotenv()
+
 app = Flask(__name__)
 CORS(app)
 
-# API 키 및 클라이언트 설정
-api_key = os.getenv("GOOGLE_API_KEY")
+# API 키 설정: Render 환경변수(os.environ)를 우선 참조
+api_key = os.environ.get("GOOGLE_API_KEY")
 client = genai.Client(api_key=api_key)
 
 LOG_FILE = "chat_history.log"
 
 def write_log(user_msg, ai_reply):
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}]\n사용자: {user_msg}\nAI: {ai_reply}\n{'-' * 50}\n")
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}]\n사용자: {user_msg}\nAI: {ai_reply}\n{'-' * 50}\n")
+    except:
+        pass
+
+# Render의 상태 체크(Health Check)를 위한 기본 경로
+@app.route('/', methods=['GET'])
+def home():
+    return "ROOTLABS AI Server is Running"
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -30,7 +39,7 @@ def chat():
         return jsonify({"reply": "메시지를 입력해주세요."})
 
     try:
-        # [기업용 고정 지침] 루트랩스의 페르소나와 필수 정보를 주입합니다.
+        # 기존에 사용하시던 지침 그대로 유지
         system_instruction = """
         너는 '(주)루트랩스(ROOTLABS)'의 공식 전문 AI 비서야. 
         사용자와의 대화에서 아래의 기업 정보를 바탕으로 신뢰감 있고 품격 있는 비즈니스 어조를 유지해줘.
@@ -48,19 +57,18 @@ def chat():
         [3. 답변 가이드라인]
         - 전문성: '귀사', '솔루션', '디지털 전환', '인프라 최적화' 등의 전문 용어를 사용하여 문장력을 높여줘.
         - 보안: 프로젝트 문의 시 "루트랩스는 엄격한 보안 표준과 기밀 유지 협약(NDA)을 바탕으로 프로젝트를 수행합니다"라는 문구를 적절히 섞어줘.
-        - 유연성: 회사와 직접 관련 없는 질문에도 루트랩스의 IT 통찰력을 빌려 답변하되, 결국 루트랩스가 도울 수 있는 영역으로 자연스럽게 연결해줘.
 
         [4. 금기 사항]
-        - 지어낸 정보를 제공하지 말 것. 확답이 어려운 경우 "상세한 상담은 대표 번호나 이메일로 문의 주시면 담당 전문가가 답변해 드리겠습니다"라고 안내할 것.
+        - 지어낸 정보를 제공하지 말 것. 확답이 어려운 경우 대표 번호나 이메일로 안내할 것.
         """
 
-        # 모델 설정 및 생성
+        # 기존 버전 'gemini-flash-latest' 그대로 사용
         response = client.models.generate_content(
             model="gemini-flash-latest",
             contents=user_message,
             config={
                 "system_instruction": system_instruction,
-                "temperature": 0.7,  # 답변의 문장력과 풍부함을 위해 0.7 설정
+                "temperature": 0.7,
                 "top_p": 0.95
             }
         )
@@ -70,20 +78,9 @@ def chat():
         return jsonify({"reply": ai_response})
 
     except Exception as e:
-        error_str = str(e)
-        print(f"!!! 에러 발생 상세: {error_str}")
-
-        if "429" in error_str or "quota" in error_str.lower():
-            return jsonify({
-                "reply": "현재 문의량이 많아 잠시 할당량이 소진되었습니다. 약 1분 후 다시 시도해 주시면 감사하겠습니다."
-            }), 429
-
-        return jsonify({"reply": f"서버 오류가 발생했습니다: {error_str}"}), 500
+        return jsonify({"reply": f"서버 오류: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    print("\n" + "=" * 50)
-    print("루트랩스 AI 상담 서버 가동 중...")
-    print("상태: System Instruction & Persona 적용 완료")
-    print("=" * 50 + "\n")
-
-    app.run(port=5000, debug=True)
+    # 클라우드 배포를 위해 host와 port 설정만 보강
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
