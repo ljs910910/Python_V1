@@ -25,7 +25,7 @@ SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 SENDER_PW = os.environ.get("SENDER_PW")
 
 # Render 프로젝트의 실제 URL
-RENDER_EXTERNAL_URL = "https://python-v1-1.onrender.com"
+RENDER_EXTERNAL_URL = "https://python-v1-1.com"
 
 # [로그 설정] 대화 내용이 기록될 파일 설정
 LOG_FILE = "chat_history.log"
@@ -46,7 +46,7 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # ---------------------------
-# 모델 지정
+# 모델 지정 (2.5-flash-lite 유지)
 # ---------------------------
 VALID_MODEL = "gemini-2.5-flash-lite"
 
@@ -59,14 +59,13 @@ def keep_alive():
     while True:
         try:
             response = requests.get(RENDER_EXTERNAL_URL, timeout=30)
-            # 불필요한 로그 파일 용량 증가를 막기 위해 핑 결과는 콘솔(print)에만 출력
             print(f"Self-Ping Status: {response.status_code}")
         except Exception as e:
             logger.error(f"Self-Ping Error: {e}")
         time.sleep(300)
 
 # ---------------------------
-# [신규] 로그 확인용 엔드포인트 (무료티어 Shell 대용)
+# [신규] 로그 확인용 엔드포인트
 # ---------------------------
 @app.route('/get-rootlabs-logs', methods=['GET'])
 def view_logs():
@@ -93,15 +92,17 @@ def home():
 def chat():
     data = request.json
     user_message = data.get("message")
-
-    # 접속자 IP 파악
     user_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
 
     if not user_message:
         return jsonify({"reply": "메시지를 입력해주세요."})
 
+    # [핵심 수정] AI 호출 전에 질문부터 로그에 남깁니다.
+    # 이렇게 하면 AI 에러가 나더라도 질문 내역은 무조건 확보됩니다.
+    logger.info(f"\n[채팅 발생] IP: {user_ip}\n질문 내용: {user_message}")
+
     try:
-        # [원칙 유지] 기존 system_instruction 가이드라인 및 정보 보존
+        # [유지] 기존 system_instruction 가이드라인 보존
         system_instruction = """
         너는 '(주)루트랩스(ROOTLABS)'의 공식 전문 AI 비서야.
 
@@ -130,20 +131,15 @@ def chat():
         )
         ai_response = response.text or "답변 생성 실패"
 
-        # [로그 기록 수정] 대화 전문 기록 및 가독성 강화
-        log_entry = (
-            f"\n[대화 로그]\n"
-            f"접속 IP: {user_ip}\n"
-            f"사용자 질문: {user_message}\n"
-            f"AI 응답: {ai_response}\n"
-            f"{'='*50}"
-        )
-        logger.info(log_entry)
+        # 답변 성공 시 기록
+        logger.info(f"AI 응답 성공: {ai_response}\n{'='*50}")
 
         return jsonify({"reply": ai_response})
 
     except Exception as e:
-        logger.error(f"AI 에러 발생 (IP: {user_ip}): {e}")
+        # 에러 발생 시에도 기록 (429 할당량 초과 포함)
+        logger.error(f"AI 처리 중단 원인: {str(e)}\n{'='*50}")
+        
         if "quota" in str(e).lower() or "429" in str(e):
             return jsonify({"reply": "챗봇 무료 할당량 초과! 잠시 후 다시 시도해주세요."}), 429
         return jsonify({"reply": "AI 서비스 오류"}), 500
