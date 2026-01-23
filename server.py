@@ -2,36 +2,55 @@ from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 from google import genai
 import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from dotenv import load_dotenv
 
+# 로컬 환경 변수 로드
 load_dotenv()
 
 app = Flask(__name__)
 
-# 모든 도메인에서 오는 요청 허용 (CORS 설정)
+# 모든 도메인(*)에서의 접속을 허용 (CORS 설정)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# API 키 및 클라이언트 설정
-api_key = os.environ.get("GOOGLE_API_KEY")
-client = genai.Client(api_key=api_key)
+# 전역 클라이언트 변수
+_client = None
 
-# 브라우저의 사전 확인(OPTIONS) 요청 처리
-@app.before_request
-def handle_preflight():
-    if request.method == "OPTIONS":
-        res = make_response()
-        res.headers.add("Access-Control-Allow-Origin", "*")
-        res.headers.add("Access-Control-Allow-Headers", "Content-Type")
-        res.headers.add("Access-Control-Allow-Methods", "POST, OPTIONS")
-        return res
+
+def get_ai_client():
+    """API 키를 안전하게 가져와 클라이언트를 생성합니다."""
+    global _client
+    api_key = os.environ.get("GOOGLE_API_KEY")
+
+    if not api_key:
+        print("!!! ERROR: GOOGLE_API_KEY를 찾을 수 없습니다.")
+        return None
+
+    if _client is None:
+        try:
+            _client = genai.Client(api_key=api_key)
+            print("--- Google AI Client 초기화 성공 ---")
+        except Exception as e:
+            print(f"!!! Client 생성 실패: {e}")
+            return None
+    return _client
+
 
 @app.route('/', methods=['GET'])
 def home():
-    return "ROOTLABS AI Server is Running"
+    return "ROOTLABS Unified AI & Mail Server is Running"
 
+
+# --- [기능 1] AI 챗봇 엔드포인트 ---
 @app.route('/chat', methods=['POST'])
 def chat():
+    client = get_ai_client()
+    if not client:
+        return jsonify({"reply": "서버 설정 오류"}), 500
+
     data = request.json
     user_message = data.get("message")
 
@@ -39,7 +58,7 @@ def chat():
         return jsonify({"reply": "메시지를 입력해주세요."})
 
     try:
-        # [복구 완료] 루트랩스 기업 정보 및 페르소나 1~4번
+        # [사용자 요청 페르소나 100% 적용]
         system_instruction = """
         너는 '(주)루트랩스(ROOTLABS)'의 공식 전문 AI 비서야. 
         사용자와의 대화에서 아래의 기업 정보를 바탕으로 신뢰감 있고 품격 있는 비즈니스 어조를 유지해줘.
@@ -62,7 +81,7 @@ def chat():
         - 지어낸 정보를 제공하지 말 것. 확답이 어려운 경우 대표 번호나 이메일로 안내할 것.
         """
 
-        # Gemini 모델 호출 (기존 버전 유지)
+        # 모델명 유지: gemini-flash-latest
         response = client.models.generate_content(
             model="gemini-flash-latest",
             contents=user_message,
@@ -74,13 +93,57 @@ def chat():
         )
 
         ai_response = response.text if response.text else "죄송합니다. 답변을 생성하지 못했습니다."
+
+        # 로그 출력
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{timestamp}] User: {user_message} | AI: {ai_response[:30]}...")
+
         return jsonify({"reply": ai_response})
 
     except Exception as e:
-        print(f"Error: {str(e)}")
-        return jsonify({"reply": "서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요."}), 500
+        print(f"!!! AI 에러: {str(e)}")
+        return jsonify({"reply": "현재 서비스가 원활하지 않습니다. 잠시 후 시도해주세요."}), 500
+
+
+# --- [기능 2] 이메일 발송 엔드포인트 ---
+@app.route('/send-mail', methods=['POST'])
+def send_mail():
+    data = request.json
+    try:
+        sender_email = os.environ.get("SENDER_EMAIL")
+        sender_pw = os.environ.get("SENDER_PW")
+        admin_email = "jslee@rootlabs.co.kr"
+
+        msg = MIMEMultipart()
+        msg['From'] = f"ROOTLABS Contact <{sender_email}>"
+        msg['To'] = admin_email
+        msg['Subject'] = f"[홈페이지 문의] {data.get('subject')}"
+
+        html_body = f"""
+        <div style='font-family: sans-serif; padding: 20px; border: 1px solid #eee; max-width: 600px;'>
+            <h2 style='color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 10px;'>신규 프로젝트 문의</h2>
+            <p><b>성함/업체명:</b> {data.get('name')}</p>
+            <p><b>회신 이메일:</b> {data.get('email')}</p>
+            <div style='background: #f9f9f9; padding: 15px; margin-top: 15px; border-radius: 5px;'>
+                <p><b>문의 상세 내용:</b></p>
+                <p style='line-height: 1.6;'>{data.get('message').replace(chr(10), '<br>')}</p>
+            </div>
+            <p style='font-size: 12px; color: #888; margin-top: 20px;'>본 메일은 ROOTLABS 공식 홈페이지 시스템에서 발송되었습니다.</p>
+        </div>
+        """
+        msg.attach(MIMEText(html_body, 'html'))
+
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(sender_email, sender_pw)
+            server.sendmail(sender_email, admin_email, msg.as_string())
+
+        return jsonify({"result": "success"})
+    except Exception as e:
+        print(f"!!! 메일 에러: {e}")
+        return jsonify({"result": "error", "message": str(e)}), 500
+
 
 if __name__ == '__main__':
-    # Render 환경의 포트 설정
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
