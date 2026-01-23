@@ -27,7 +27,7 @@ SENDER_PW = os.environ.get("SENDER_PW")
 # Render 프로젝트의 실제 URL
 RENDER_EXTERNAL_URL = "https://python-v1-1.onrender.com"
 
-# [로그 설정]
+# [로그 설정] 대화 내용이 기록될 파일 설정
 LOG_FILE = "chat_history.log"
 logging.basicConfig(
     level=logging.INFO,
@@ -50,7 +50,6 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # ---------------------------
 VALID_MODEL = "gemini-2.5-flash-lite"
 
-
 # ---------------------------
 # [신규] 서버 슬립 방지 (Self-Ping) 로직
 # ---------------------------
@@ -60,11 +59,11 @@ def keep_alive():
     while True:
         try:
             response = requests.get(RENDER_EXTERNAL_URL, timeout=30)
+            # 불필요한 로그 파일 용량 증가를 막기 위해 핑 결과는 콘솔(print)에만 출력
             print(f"Self-Ping Status: {response.status_code}")
         except Exception as e:
             logger.error(f"Self-Ping Error: {e}")
         time.sleep(300)
-
 
 # ---------------------------
 # [신규] 로그 확인용 엔드포인트 (무료티어 Shell 대용)
@@ -80,14 +79,12 @@ def view_logs():
 
     return Response(log_content, mimetype='text/plain')
 
-
 # ---------------------------
 # 루트 테스트
 # ---------------------------
 @app.route('/', methods=['GET'])
 def home():
     return "ROOTLABS Unified AI & Mail Server is Running"
-
 
 # ---------------------------
 # AI 챗봇 엔드포인트
@@ -104,7 +101,7 @@ def chat():
         return jsonify({"reply": "메시지를 입력해주세요."})
 
     try:
-        # [유지] 기존 system_instruction 가이드라인 및 정보 보존
+        # [원칙 유지] 기존 system_instruction 가이드라인 및 정보 보존
         system_instruction = """
         너는 '(주)루트랩스(ROOTLABS)'의 공식 전문 AI 비서야.
 
@@ -133,8 +130,15 @@ def chat():
         )
         ai_response = response.text or "답변 생성 실패"
 
-        # [로그 기록]
-        logger.info(f"CHAT_LOG | IP: {user_ip} | User: {user_message} | AI: {ai_response[:50]}...")
+        # [로그 기록 수정] 대화 전문 기록 및 가독성 강화
+        log_entry = (
+            f"\n[대화 로그]\n"
+            f"접속 IP: {user_ip}\n"
+            f"사용자 질문: {user_message}\n"
+            f"AI 응답: {ai_response}\n"
+            f"{'='*50}"
+        )
+        logger.info(log_entry)
 
         return jsonify({"reply": ai_response})
 
@@ -143,7 +147,6 @@ def chat():
         if "quota" in str(e).lower() or "429" in str(e):
             return jsonify({"reply": "챗봇 무료 할당량 초과! 잠시 후 다시 시도해주세요."}), 429
         return jsonify({"reply": "AI 서비스 오류"}), 500
-
 
 # ---------------------------
 # 이메일 발송 엔드포인트
@@ -184,7 +187,6 @@ def send_mail():
     except Exception as e:
         logger.error(f"Mail Error (IP: {user_ip}): {e}")
         return jsonify({"result": "error", "message": str(e)}), 500
-
 
 # ---------------------------
 # 서버 시작
