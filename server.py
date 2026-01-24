@@ -61,7 +61,7 @@ def keep_alive():
             requests.get(RENDER_EXTERNAL_URL, timeout=30)
         except Exception:
             pass
-        time.sleep(300)
+        time.sleep(780)
 
 
 # ---------------------------
