@@ -25,13 +25,13 @@ SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 SENDER_PW = os.environ.get("SENDER_PW")
 
 # Render 프로젝트의 실제 URL
-RENDER_EXTERNAL_URL = "https://python-v1-1.com"
+RENDER_EXTERNAL_URL = "https://python-v1-1.onrender.com"
 
-# [로그 설정] 대화 내용이 기록될 파일 설정
+# [로그 설정] 간소화된 포맷: 시간과 메시지만 기록
 LOG_FILE = "chat_history.log"
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format='%(asctime)s | %(message)s',
     handlers=[
         logging.FileHandler(LOG_FILE, encoding='utf-8'),
         logging.StreamHandler()
@@ -50,40 +50,75 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # ---------------------------
 VALID_MODEL = "gemini-2.5-flash-lite"
 
+
 # ---------------------------
-# [신규] 서버 슬립 방지 (Self-Ping) 로직
+# 서버 슬립 방지 (Self-Ping) 로직
 # ---------------------------
 def keep_alive():
     time.sleep(20)
-    logger.info(f"🚀 Self-Ping 스레드가 활성화되었습니다. 대상: {RENDER_EXTERNAL_URL}")
     while True:
         try:
-            response = requests.get(RENDER_EXTERNAL_URL, timeout=30)
-            print(f"Self-Ping Status: {response.status_code}")
-        except Exception as e:
-            logger.error(f"Self-Ping Error: {e}")
+            requests.get(RENDER_EXTERNAL_URL, timeout=30)
+        except Exception:
+            pass
         time.sleep(300)
 
+
 # ---------------------------
-# [신규] 로그 확인용 엔드포인트
+# [가독성 강화] 로그 확인용 엔드포인트
 # ---------------------------
 @app.route('/get-rootlabs-logs', methods=['GET'])
 def view_logs():
-    """브라우저에서 로그 파일을 텍스트로 확인하는 경로"""
     if not os.path.exists(LOG_FILE):
         return "로그 파일이 아직 생성되지 않았습니다.", 404
 
     with open(LOG_FILE, "r", encoding="utf-8") as f:
-        log_content = f.read()
+        lines = f.readlines()
 
-    return Response(log_content, mimetype='text/plain')
+    html_content = """
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>ROOTLABS Chat Logs</title>
+        <style>
+            body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; padding: 20px; line-height: 1.6; }
+            .log-entry { border-bottom: 1px solid #333; padding: 12px 0; }
+            .ip { color: #00adb5; font-weight: bold; }
+            .question { color: #3498db; font-weight: bold; display: block; }
+            .answer { color: #2ecc71; display: block; white-space: pre-wrap; margin-top: 5px; }
+            .error { color: #ff4b2b; font-weight: bold; }
+            .divider { color: #f1c40f; margin: 15px 0; font-weight: bold; }
+            h2 { color: #ffffff; border-bottom: 3px solid #00adb5; display: inline-block; padding-bottom: 5px; }
+        </style>
+    </head>
+    <body>
+        <h2>📊 (주)루트랩스 AI 대화 상세 로그</h2>
+        <div style="margin-top:20px;">
+    """
 
-# ---------------------------
-# 루트 테스트
-# ---------------------------
+    for line in lines:
+        formatted_line = line
+        if "Q:" in line:
+            formatted_line = line.replace("Q:", "<span class='question'>❓ Q:</span>")
+        if "A:" in line:
+            formatted_line = line.replace("A:", "<span class='answer'>💡 A:</span>")
+        if "Error:" in line:
+            formatted_line = line.replace("Error:", "<span class='error'>❌ Error:</span>")
+        if "IP:" in line:
+            formatted_line = line.replace("IP:", "<span class='ip'>🌐 IP:</span>")
+        if "━━━━" in line:
+            formatted_line = f"<div class='divider'>{line}</div>"
+
+        html_content += f"<div class='log-entry'>{formatted_line}</div>"
+
+    html_content += "</div></body></html>"
+    return html_content
+
+
 @app.route('/', methods=['GET'])
 def home():
     return "ROOTLABS Unified AI & Mail Server is Running"
+
 
 # ---------------------------
 # AI 챗봇 엔드포인트
@@ -91,18 +126,14 @@ def home():
 @app.route('/chat', methods=['POST'])
 def chat():
     data = request.json
-    user_message = data.get("message")
+    user_message = data.get("message", "").strip()
     user_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
 
     if not user_message:
         return jsonify({"reply": "메시지를 입력해주세요."})
 
-    # [핵심 수정] AI 호출 전에 질문부터 로그에 남깁니다.
-    # 이렇게 하면 AI 에러가 나더라도 질문 내역은 무조건 확보됩니다.
-    logger.info(f"\n[채팅 발생] IP: {user_ip}\n질문 내용: {user_message}")
-
     try:
-        # [유지] 기존 system_instruction 가이드라인 보존
+        # [원복] 1~4번 system_instruction 완벽 복구
         system_instruction = """
         너는 '(주)루트랩스(ROOTLABS)'의 공식 전문 AI 비서야.
 
@@ -129,64 +160,53 @@ def chat():
             user_message,
             generation_config={"temperature": 0.7, "top_p": 0.95}
         )
-        ai_response = response.text or "답변 생성 실패"
+        ai_response = response.text or "답변 실패"
 
-        # 답변 성공 시 기록
-        logger.info(f"AI 응답 성공: {ai_response}\n{'='*50}")
+        # [간소화된 로깅] 불필요한 정보 제거
+        logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        logger.info(f"IP: {user_ip}")
+        logger.info(f"Q: {user_message}")
+        logger.info(f"A: {ai_response.strip()}")
 
         return jsonify({"reply": ai_response})
 
     except Exception as e:
-        # 에러 발생 시에도 기록 (429 할당량 초과 포함)
-        logger.error(f"AI 처리 중단 원인: {str(e)}\n{'='*50}")
-        
-        if "quota" in str(e).lower() or "429" in str(e):
-            return jsonify({"reply": "챗봇 무료 할당량 초과! 잠시 후 다시 시도해주세요."}), 429
-        return jsonify({"reply": "AI 서비스 오류"}), 500
+        error_str = str(e)
+        # [간소화된 에러 로깅] violations, quota_id 등 복잡한 문구 완전 제거
+        status = "할당량 초과(429)" if "429" in error_str or "quota" in error_str.lower() else "시스템 에러"
+
+        logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        logger.info(f"IP: {user_ip}")
+        logger.info(f"Q: {user_message}")
+        logger.info(f"Error: {status}")
+
+        if "429" in error_str or "quota" in error_str.lower():
+            return jsonify({"reply": "현재 문의량이 많아 잠시 서비스가 지연되고 있습니다. 잠시 후 다시 시도해주세요."}), 429
+        return jsonify({"reply": "AI 서비스 오류가 발생했습니다."}), 500
+
 
 # ---------------------------
-# 이메일 발송 엔드포인트
+# 이메일 발송 엔드포인트 (기본 유지)
 # ---------------------------
 @app.route('/send-mail', methods=['POST'])
 def send_mail():
     data = request.json
-    user_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     try:
-        if not SENDER_EMAIL or not SENDER_PW:
-            return jsonify({"result": "error", "message": "메일 발송 설정이 없습니다."}), 503
-
+        if not SENDER_EMAIL or not SENDER_PW: return jsonify({"result": "error"}), 503
         msg = MIMEMultipart()
         msg['From'] = f"ROOTLABS Contact <{SENDER_EMAIL}>"
         msg['To'] = "jslee@rootlabs.co.kr"
         msg['Subject'] = f"[홈페이지 문의] {data.get('subject')}"
-
-        html_body = f"""
-        <div style='padding:20px;font-family:sans-serif;'>
-            <h2>신규 프로젝트 문의 (접속IP: {user_ip})</h2>
-            <p><b>성함/업체명:</b> {data.get('name')}</p>
-            <p><b>Email:</b> {data.get('email')}</p>
-            <div style='margin-top:15px;'>
-                <p><b>문의 내용:</b></p>
-                <p>{data.get('message').replace(chr(10), '<br>')}</p>
-            </div>
-        </div>
-        """
-        msg.attach(MIMEText(html_body, 'html'))
-
+        msg.attach(MIMEText(f"성함: {data.get('name')}\n내용: {data.get('message')}", 'plain'))
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
+            server.starttls();
             server.login(SENDER_EMAIL, SENDER_PW)
             server.sendmail(SENDER_EMAIL, "jslee@rootlabs.co.kr", msg.as_string())
-
-        logger.info(f"MAIL_LOG | IP: {user_ip} | From: {data.get('email')} | Success")
         return jsonify({"result": "success"})
-    except Exception as e:
-        logger.error(f"Mail Error (IP: {user_ip}): {e}")
-        return jsonify({"result": "error", "message": str(e)}), 500
+    except:
+        return jsonify({"result": "error"}), 500
 
-# ---------------------------
-# 서버 시작
-# ---------------------------
+
 if __name__ == "__main__":
     ping_thread = threading.Thread(target=keep_alive, daemon=True)
     ping_thread.start()
