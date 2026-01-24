@@ -48,8 +48,8 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # ---------------------------
 # 모델 지정 (2.5-flash-lite 유지)
 # ---------------------------
-VALID_MODEL = "gemini-2.5-flash-lite"
-
+#VALID_MODEL = "gemini-2.5-flash-lite"
+VALID_MODEL = "gemini-2.5-flash"
 
 # ---------------------------
 # 서버 슬립 방지 (Self-Ping) 로직
