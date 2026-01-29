@@ -181,16 +181,29 @@ def generate_image():
 # ---------------------------
 # 메일 서버
 # ---------------------------
-@app.route('/send-mail', methods=['POST'])
+@app.route('/send-mail', methods=['POST', 'OPTIONS'], strict_slashes=False)
 def send_mail():
-    data = request.json
+
+    # ✅ CORS Preflight 대응 (핵심)
+    if request.method == 'OPTIONS':
+        return '', 200
+
+    data = request.get_json(silent=True) or {}
     user_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
 
+    # ✅ 환경변수 체크
     if not SENDER_EMAIL or not SENDER_PW:
         return jsonify({
             "result": "error",
             "message": "메일 서버 인증 정보가 설정되지 않았습니다."
         }), 503
+
+    # ✅ 필수 데이터 검증 (서버 방어)
+    if not data.get("name") or not data.get("email") or not data.get("subject") or not data.get("message"):
+        return jsonify({
+            "result": "error",
+            "message": "필수 항목이 누락되었습니다."
+        }), 400
 
     try:
         msg = MIMEMultipart()
@@ -207,8 +220,8 @@ def send_mail():
 """
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
-        # ✅ Gmail SSL 방식 (Render 안정)
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        # ✅ Gmail SSL 방식 (Render에서 가장 안정)
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
             server.login(SENDER_EMAIL, SENDER_PW)
             server.sendmail(
                 SENDER_EMAIL,
@@ -243,3 +256,4 @@ if __name__ == "__main__":
     threading.Thread(target=keep_alive, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
