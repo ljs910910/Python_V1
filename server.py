@@ -2,15 +2,11 @@ from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import google.generativeai as genai
 import os
-import smtplib
 import threading
 import time
 import requests
 import logging
 import openai
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from datetime import datetime
 from dotenv import load_dotenv
 
 # ---------------------------
@@ -181,71 +177,45 @@ def generate_image():
 # ---------------------------
 # 메일 서버
 # ---------------------------
-@app.route('/send-mail', methods=['POST', 'OPTIONS'], strict_slashes=False)
+POSTMARK_API_KEY = os.environ.get("POSTMARK_API_KEY")
+SENDER_EMAIL = "jslee@rootlabs.co.kr"  # 인증된 발신자 이메일
+RECIPIENT_EMAIL = "jslee@rootlabs.co.kr"
+
+@app.route("/send-mail", methods=["POST"])
 def send_mail():
-
-    # ✅ CORS Preflight 대응 (핵심)
-    if request.method == 'OPTIONS':
-        return '', 200
-
-    data = request.get_json(silent=True) or {}
-    user_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-
-    # ✅ 환경변수 체크
-    if not SENDER_EMAIL or not SENDER_PW:
-        return jsonify({
-            "result": "error",
-            "message": "메일 서버 인증 정보가 설정되지 않았습니다."
-        }), 503
-
-    # ✅ 필수 데이터 검증 (서버 방어)
-    if not data.get("name") or not data.get("email") or not data.get("subject") or not data.get("message"):
-        return jsonify({
-            "result": "error",
-            "message": "필수 항목이 누락되었습니다."
-        }), 400
-
+    data = request.json
     try:
-        msg = MIMEMultipart()
-        msg['From'] = SENDER_EMAIL
-        msg['To'] = "jslee@rootlabs.co.kr"
-        msg['Subject'] = f"[홈페이지 문의] {data.get('subject')}"
-
-        body = f"""
+        resp = requests.post(
+            "https://api.postmarkapp.com/email",
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "X-Postmark-Server-Token": POSTMARK_API_KEY
+            },
+            json={
+                "From": SENDER_EMAIL,
+                "To": RECIPIENT_EMAIL,
+                "Subject": f"[홈페이지 문의] {data.get('subject')}",
+                "TextBody": f"""
 성함: {data.get('name')}
 이메일: {data.get('email')}
 
 문의 내용:
 {data.get('message')}
 """
-        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+            }
+        )
 
-        # ✅ Gmail SSL 방식 (Render에서 가장 안정)
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
-            server.login(SENDER_EMAIL, SENDER_PW)
-            server.sendmail(
-                SENDER_EMAIL,
-                ["jslee@rootlabs.co.kr"],
-                msg.as_string()
-            )
-
-        logger.info(f"Mail Success | IP: {user_ip} | Sender: {data.get('name')}")
-        return jsonify({"result": "success"})
-
-    except smtplib.SMTPAuthenticationError:
-        logger.error("Mail Error: SMTP 인증 실패 (앱 비밀번호 확인)")
-        return jsonify({
-            "result": "error",
-            "message": "메일 서버 인증에 실패했습니다. 앱 비밀번호를 확인해주세요."
-        }), 401
+        if resp.status_code == 200:
+            return jsonify({"result": "success"})
+        else:
+            return jsonify({
+                "result": "error",
+                "message": resp.json().get("Message", "메일 발송 실패")
+            }), resp.status_code
 
     except Exception as e:
-        logger.error(f"Mail Error: {str(e)}")
-        return jsonify({
-            "result": "error",
-            "message": str(e)
-        }), 500
-
+        return jsonify({"result": "error", "message": str(e)}), 500
 
 @app.route('/', methods=['GET'])
 def home():
@@ -256,4 +226,3 @@ if __name__ == "__main__":
     threading.Thread(target=keep_alive, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
