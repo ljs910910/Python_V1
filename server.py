@@ -126,6 +126,11 @@ def chat():
         [4] 답변 스타일
         - 전문 용어 & 비즈니스 어조 유지
         - 지어낸 정보 제공 금지 및 보안 준수
+        
+        [5] AI 이미지 제작 문의 대응
+        - 사용자가 "AI 이미지 제작", "ROOT AI", "이미지 생성/수정" 등에 대해 물으면, 루트랩스가 제공하는 차세대 AI 이미지 제작 솔루션을 소개할 것.
+        - "현재 루트랩스는 고도의 생성형 AI 기술을 활용한 맞춤형 이미지 제작 솔루션을 제공하고 있습니다."라고 답변을 시작해.
+        - 구체적인 사용법이나 기술 문의가 들어오면 상세한 정보를 안내해.
         """
         model = genai.GenerativeModel(model_name=VALID_MODEL, system_instruction=system_instruction)
         response = model.generate_content(user_message, generation_config={"temperature": 0.7, "top_p": 0.95})
@@ -174,34 +179,59 @@ def generate_image():
 
 
 # ---------------------------
-# [엔드포인트] 메일 발송 (문법 오류 해결)
+# 메일 서버
 # ---------------------------
 @app.route('/send-mail', methods=['POST'])
 def send_mail():
     data = request.json
     user_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-    try:
-        if not SENDER_EMAIL or not SENDER_PW: return jsonify({"result": "error"}), 503
 
+    if not SENDER_EMAIL or not SENDER_PW:
+        return jsonify({
+            "result": "error",
+            "message": "메일 서버 인증 정보가 설정되지 않았습니다."
+        }), 503
+
+    try:
         msg = MIMEMultipart()
-        msg['From'] = f"ROOTLABS Contact <{SENDER_EMAIL}>"
+        msg['From'] = SENDER_EMAIL
         msg['To'] = "jslee@rootlabs.co.kr"
         msg['Subject'] = f"[홈페이지 문의] {data.get('subject')}"
 
-        body = f"성함: {data.get('name')}\n내용: {data.get('message')}"
-        msg.attach(MIMEText(body, 'plain'))
+        body = f"""
+성함: {data.get('name')}
+이메일: {data.get('email')}
 
-        # SMTP 로직 정밀 수정
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
+문의 내용:
+{data.get('message')}
+"""
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+        # ✅ Gmail SSL 방식 (Render 안정)
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(SENDER_EMAIL, SENDER_PW)
-            server.sendmail(SENDER_EMAIL, "jslee@rootlabs.co.kr", msg.as_string())
+            server.sendmail(
+                SENDER_EMAIL,
+                ["jslee@rootlabs.co.kr"],
+                msg.as_string()
+            )
 
-        logger.info(f"Mail | IP: {user_ip} | Sender: {data.get('name')}")
+        logger.info(f"Mail Success | IP: {user_ip} | Sender: {data.get('name')}")
         return jsonify({"result": "success"})
+
+    except smtplib.SMTPAuthenticationError:
+        logger.error("Mail Error: SMTP 인증 실패 (앱 비밀번호 확인)")
+        return jsonify({
+            "result": "error",
+            "message": "메일 서버 인증에 실패했습니다. 앱 비밀번호를 확인해주세요."
+        }), 401
+
     except Exception as e:
         logger.error(f"Mail Error: {str(e)}")
-        return jsonify({"result": "error"}), 500
+        return jsonify({
+            "result": "error",
+            "message": str(e)
+        }), 500
 
 
 @app.route('/', methods=['GET'])
