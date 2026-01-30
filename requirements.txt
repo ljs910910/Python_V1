@@ -5,3 +5,5 @@ python-dotenv==1.0.0
 requests
 openai
 gunicorn
+Pillow>=10.0.0
+Werkzeug>=2.3.7
