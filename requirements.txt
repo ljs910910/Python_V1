@@ -3,7 +3,8 @@ flask-cors==3.0.10
 google-generativeai>=0.8.6
 python-dotenv==1.0.0
 requests
-openai
+openai==0.28.0
 gunicorn
 Pillow>=10.0.0
 Werkzeug>=2.3.7
+
