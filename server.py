@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, send_file
 from flask_cors import CORS
 import google.generativeai as genai
 import os
@@ -7,6 +7,10 @@ import time
 import requests
 import logging
 import openai
+import io
+import base64
+from PIL import Image
+from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
 # ---------------------------
@@ -50,15 +54,14 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # 챗봇 모델 지정
 VALID_MODEL = "gemini-2.5-flash"
 
+app.config['UPLOAD_FOLDER'] = 'uploads'
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# ---------------------------
-# 보조 함수
-# ---------------------------
-def closest_supported_size(w, h):
-    candidates = [(1024, 1024), (1024, 1536), (1536, 1024)]
-    best = min(candidates, key=lambda s: abs(s[0] - w) + abs(s[1] - h))
-    return f"{best[0]}x{best[1]}"
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 
+# 파일 확장자 체크
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def keep_alive():
     time.sleep(20)
@@ -68,7 +71,6 @@ def keep_alive():
         except:
             pass
         time.sleep(780)
-
 
 # ---------------------------
 # [엔드포인트] 로그 확인
@@ -89,9 +91,8 @@ def view_logs():
     html_content += "</body></html>"
     return html_content
 
-
 # ---------------------------
-# [엔드포인트] AI 챗봇 (절대 중략 금지 지침 반영)
+# [엔드포인트] AI 챗봇
 # ---------------------------
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -122,7 +123,7 @@ def chat():
         [4] 답변 스타일
         - 전문 용어 & 비즈니스 어조 유지
         - 지어낸 정보 제공 금지 및 보안 준수
-        
+
         [5] AI 이미지 제작 문의 대응
         - 사용자가 "AI 이미지 제작", "ROOT AI", "이미지 생성/수정" 등에 대해 물으면, 루트랩스가 제공하는 차세대 AI 이미지 제작 솔루션을 소개할 것.
         - "현재 루트랩스는 고도의 생성형 AI 기술을 활용한 맞춤형 이미지 제작 솔루션을 제공하고 있습니다."라고 답변을 시작해.
@@ -139,7 +140,7 @@ def chat():
 
 
 # ---------------------------
-# [엔드포인트] 이미지 생성 (모델 옵션 원복)
+# [엔드포인트] 이미지 생성
 # ---------------------------
 @app.route('/generate-image', methods=['POST'])
 def generate_image():
@@ -148,29 +149,104 @@ def generate_image():
     size_input = data.get("size", "1024x1024")
     user_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
 
+    # 사용자 입력 사이즈 파싱
     try:
         if 'x' in size_input:
-            w, h = map(int, size_input.split('x'))
+            w, h = map(int, size_input.lower().split('x'))
         else:
             w = h = int(size_input)
     except:
         w = h = 1024
 
-    size_mapped = closest_supported_size(w, h)
+    # 1024x1024 이상으로 올라가지 않도록 제한 (과금 방지)
+    w = min(w, 1024)
+    h = min(h, 1024)
+
+    size_str = f"{w}x{h}"
 
     try:
-        # 제공된 코드 규격 유지
-        result = openai.images.generate(
+        result = openai.Image.create(
             model="gpt-image-1",
             prompt=prompt,
-            size=size_mapped,
-            quality="auto"
+            size=size_str,
+            n=1
         )
         image_base64 = result.data[0].b64_json
-        logger.info(f"Image | IP: {user_ip} | Prompt: {prompt}")
+        logger.info(f"Image generated | IP: {user_ip} | Prompt: {prompt} | Size: {size_str}")
         return jsonify({"image_url": f"data:image/png;base64,{image_base64}"})
+
     except Exception as e:
-        logger.error(f"Image Error: {str(e)}")
+        logger.error(f"Image Generation Error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# ---------------------------
+# [엔드포인트] 이미지 수정 (원본 크기 유지, 과금 최소화)
+# ---------------------------
+@app.route("/edit-image", methods=["POST"])
+def edit_image():
+    if "image" not in request.files:
+        return jsonify({"error": "이미지 파일이 없습니다."}), 400
+    if "prompt" not in request.form:
+        return jsonify({"error": "프롬프트가 없습니다."}), 400
+
+    image_file = request.files["image"]
+    prompt = request.form["prompt"]
+
+    try:
+        # 1. 원본 이미지 열기
+        image = Image.open(image_file)
+        original_width, original_height = image.size
+
+        # 2. OpenAI API용 BytesIO 준비
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format="PNG")
+        img_byte_arr.seek(0)
+
+        files = {
+            "image": (secure_filename(image_file.filename), img_byte_arr, "image/png"),
+        }
+
+        data = {
+            "prompt": prompt,
+            "model": "gpt-image-1",
+            "n": 1
+            # size 파라미터 제거 → OpenAI Edit API 기본값 사용 (1024x1024)
+        }
+
+        # 3. OpenAI Image Edit API 요청
+        response = requests.post(
+            "https://api.openai.com/v1/images/edits",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            files=files,
+            data=data
+        )
+
+        if response.status_code != 200:
+            raise Exception(response.text)
+
+        # 4. 결과 디코딩
+        result_json = response.json()
+        image_base64 = result_json["data"][0]["b64_json"]
+        edited_image_data = base64.b64decode(image_base64)
+
+        # 5. 원본 크기로 리사이즈 (과금 최소화 + 사용자 입력 크기 보장)
+        edited_image = Image.open(io.BytesIO(edited_image_data))
+        edited_image = edited_image.resize((original_width, original_height), Image.LANCZOS)
+
+        output_bytes = io.BytesIO()
+        edited_image.save(output_bytes, format="PNG")
+        output_bytes.seek(0)
+
+        # 6. 반환
+        return send_file(
+            output_bytes,
+            mimetype="image/png",
+            as_attachment=False,
+            download_name="edited.png"
+        )
+
+    except Exception as e:
+        logger.error(f"Edit Image Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -220,7 +296,6 @@ def send_mail():
 @app.route('/', methods=['GET'])
 def home():
     return "ROOTLABS Unified AI Server is Online"
-
 
 if __name__ == "__main__":
     threading.Thread(target=keep_alive, daemon=True).start()
