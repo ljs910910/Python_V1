@@ -698,8 +698,9 @@ def edit_image():
         negative_prompt = get_adaptive_negative_prompt(style_category)
         print("🎨 Vertex AI Imagen 이미지 수정 요청 전송...")
 
+        # 🔹 여기서 base_image는 반드시 PIL.Image.Image 타입으로 전달
         response = model.edit_image(
-            base_image=input_pil_image,
+            base_image=input_pil_image,  # PIL 이미지 그대로 전달
             prompt=visual_prompt,
             negative_prompt=negative_prompt,
             number_of_images=1,
@@ -709,7 +710,7 @@ def edit_image():
         if not response.images:
             raise ValueError("❌ AI가 이미지를 반환하지 않았습니다. (Safety Filter 가능성)")
 
-        # AI 결과 이미지
+        # AI 결과 이미지 (PIL 이미지)
         final_img = response.images[0]
 
         # 6️⃣ 이미지 후처리: 리사이즈 + 선명도/대비/채도
@@ -767,7 +768,6 @@ def edit_image():
             "error": f"서버 에러: {str(e)}",
             "detail": error_trace
         }), 500
-
 
 # ---------------------------
 # [엔드포인트] 메일 서버 (기존 소스 A 유지)
