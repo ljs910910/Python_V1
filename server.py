@@ -12,6 +12,7 @@ import openai
 import io
 import base64
 import json
+import traceback
 import re
 import warnings
 from PIL import Image, ImageEnhance, ImageFont, ImageDraw, ImageColor
@@ -138,9 +139,9 @@ def keep_alive():
 # =======================================================
 # [4] 신규 통합 기능: 이미지 생성 로직 (Vertex AI + Gemini)
 # =======================================================
-
 # --- 기능 1: 만능 텍스트 합성기 (슈퍼샘플링 적용: 화질 2배 강화) ---
-def draw_text_overlay(image, text, position="BOTTOM_CENTER", is_title=False, requested_size=None, text_color="white", stroke_color="black"):
+def draw_text_overlay(image, text, position="BOTTOM_CENTER", is_title=False, requested_size=None, text_color="white",
+                      stroke_color="black"):
     # 텍스트가 없거나 빈 문자열이면 바로 리턴
     if not text or not isinstance(text, str) or text.strip() == "":
         return image
@@ -171,21 +172,18 @@ def draw_text_overlay(image, text, position="BOTTOM_CENTER", is_title=False, req
         if requested_size is not None and isinstance(requested_size, int) and requested_size > 0:
             font_size = requested_size * scale_factor
         else:
-            if is_title:
-                font_size = int(target_h * 0.15)
-            else:
-                font_size = int(target_h * 0.05)
+            # 자동 비율: 제목은 8%, 부제는 4%
+            font_size = int(target_w * (0.08 if is_title else 0.04))
 
-        # 최소 크기 보정
-        if font_size < 20: font_size = 20
+        # 최소/최대 보정
+        font_size = max(20, min(font_size, target_h))
 
-        # 외곽선 두께도 2배로
+        # 외곽선 두께
         stroke_width = max(2, int(font_size * 0.08))
 
         try:
             font = ImageFont.truetype(font_path, font_size)
         except:
-            # 폰트 로드 실패시 기본 폰트 (화질 안 좋음)
             logger.warning("⚠️ 폰트 로드 실패, 기본 폰트 사용")
             font = ImageFont.load_default()
 
@@ -194,7 +192,17 @@ def draw_text_overlay(image, text, position="BOTTOM_CENTER", is_title=False, req
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
 
-        # 여백 계산 (2배 스케일 기준)
+        # 글자가 이미지 너비를 넘으면 폰트 줄이기
+        max_text_width = target_w * 0.9
+        while text_w > max_text_width and font_size > 20:
+            font_size = int(font_size * 0.95)
+            font = ImageFont.truetype(font_path, font_size)
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+            stroke_width = max(2, int(font_size * 0.08))
+
+        # 여백 계산
         margin_x = int(target_w * 0.05)
         margin_y = int(target_h * 0.05)
 
@@ -215,17 +223,17 @@ def draw_text_overlay(image, text, position="BOTTOM_CENTER", is_title=False, req
         else:
             y = (target_h - text_h) // 2
 
-        # 텍스트 그리기 (확대된 캔버스에)
+        # 텍스트 그리기
         try:
             draw.text((x, y), text, font=font, fill=text_color, stroke_width=stroke_width, stroke_fill=stroke_color)
         except Exception as color_error:
             logger.warning(f"⚠️ 색상 적용 실패 ({text_color}) -> 기본값 적용")
             draw.text((x, y), text, font=font, fill="white", stroke_width=stroke_width, stroke_fill="black")
 
-        # 다시 원래 크기로 고품질 축소 (압축되면서 화질이 쨍해짐)
+        # 슈퍼샘플링 축소
         final_image = upscaled_image.resize((original_w, original_h), Image.LANCZOS)
 
-        logger.info(f"✍️ [슈퍼샘플링 합성 완료] '{text}'")
+        logger.info(f"✍️ [슈퍼샘플링 합성 완료] '{text}' ({font_size//scale_factor}px)")
         return final_image
 
     except Exception as e:
@@ -419,9 +427,6 @@ def generate_full_image(prompt, style_category, width, height):
         logger.error(f"❌ 이미지 후처리 실패: {e}")
         return None
 
-# =======================================================
-# [5] 엔드포인트 라우팅 (기존 기능 + 신규 이미지 기능)
-# =======================================================
 
 # ---------------------------
 # [엔드포인트] 로그 확인
@@ -491,143 +496,277 @@ def chat():
 
 
 # ---------------------------
-# [엔드포인트] 이미지 생성 (소스 B 로직 적용)
+# [엔드포인트] 이미지 생성
 # ---------------------------
-@app.route('/generate-image', methods=['POST'])
-def generate_image():
-    # 요청 데이터 파싱 (Source A의 인터페이스와 호환성 유지)
-    data = request.json
-    raw_input = data.get("prompt", "").strip()
-    size_input = data.get("size", "1480x600")
-    img_format = data.get("format", "PNG").upper()
-    user_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-
+@app.route("/generate-image", methods=["POST"])
+def generate_auto_banner():
+    import traceback
     try:
-        if 'x' in size_input:
-            w, h = map(int, size_input.lower().split('x'))
-        else:
-            w = h = int(size_input)
-    except:
-        w, h = 1024, 1024
+        logger.info("===== 🔵 /generate-image START =====")
 
-    logger.info(f"🚀 [이미지 생성 요청] IP: {user_ip} | Prompt: '{raw_input}' | Size: {w}x{h}")
+        # 1️⃣ JSON 강제 파싱 (조용히 실패하는 것 방지)
+        data = request.get_json(force=True, silent=False)
+        logger.info(f"📦 Raw JSON: {data}")
 
-    # 1. Gemini를 이용한 프롬프트 분석 및 스타일 정의
-    ai_result = generate_universal_prompt(raw_input)
-    style_category = ai_result.get("style_category", "REALISM")
-    visual_prompt = ai_result.get("visual_prompt")
+        if not isinstance(data, dict):
+            raise ValueError("JSON 데이터가 dict가 아님")
 
-    title_text = ai_result.get("title_text")
-    title_pos = ai_result.get("title_position", "TOP_CENTER")
-    bottom_text = ai_result.get("bottom_text")
-    bottom_pos = ai_result.get("bottom_position", "BOTTOM_CENTER")
+        raw_input = str(data.get("prompt", "")).strip()
+        size_input = str(data.get("size", "1480x600"))
 
-    font_size_req = ai_result.get("font_size_req")
-    text_color = ai_result.get("text_color", "#FFFFFF")
-    stroke_color = ai_result.get("stroke_color", "#000000")
+        # 🔐 format 방어
+        FORMAT_MAP = {
+            "JPG": "JPEG",
+            "JPEG": "JPEG",
+            "PNG": "PNG"
+        }
 
-    logger.info(f"🧠 [분석 완료] 스타일:{style_category} / 컬러:{text_color}")
+        input_format = str(data.get("format", "PNG")).strip().upper()
+        img_format = FORMAT_MAP.get(input_format, "PNG")
 
-    # 2. Vertex AI Imagen으로 이미지 생성
-    final_img = generate_full_image(visual_prompt, style_category, w, h)
+        logger.info(f"🖼 Format 요청값: {input_format} → 저장포맷: {img_format}")
 
-    if final_img == "QUOTA_ERROR":
-        return jsonify({"error": "Google Cloud 사용량 초과(Quota Exceeded). 1분 뒤 다시 시도해주세요."}), 429
+        # 2️⃣ 사이즈 파싱
+        try:
+            if "x" in size_input.lower():
+                w, h = map(int, size_input.lower().split("x"))
+            else:
+                w = h = int(size_input)
+        except Exception as e:
+            logger.warning(f"⚠️ 사이즈 파싱 실패 → 기본값 사용: {e}")
+            w, h = 1480, 600
 
-    if final_img:
-        # 3. 텍스트 오버레이 합성 (슈퍼샘플링)
-        if title_text and title_text.strip() != "":
-            final_img = draw_text_overlay(final_img, title_text, position=title_pos, is_title=True,
-                                          requested_size=font_size_req, text_color=text_color,
-                                          stroke_color=stroke_color)
-        if bottom_text and bottom_text.strip() != "":
-            final_img = draw_text_overlay(final_img, bottom_text, position=bottom_pos, is_title=False,
-                                          requested_size=font_size_req, text_color=text_color,
-                                          stroke_color=stroke_color)
+        logger.info(f"📐 Size: {w}x{h}")
 
-        # 4. 결과 반환
+        # 3️⃣ 프롬프트 분석
+        ai_result = generate_universal_prompt(raw_input) or {}
+        logger.info(f"🧠 AI 분석 결과: {ai_result}")
+
+        style_category = ai_result.get("style_category", "REALISM")
+        visual_prompt = ai_result.get("visual_prompt")
+
+        title_text = ai_result.get("title_text")
+        title_pos = ai_result.get("title_position", "TOP_CENTER")
+        bottom_text = ai_result.get("bottom_text")
+        bottom_pos = ai_result.get("bottom_position", "BOTTOM_CENTER")
+
+        font_size_req = ai_result.get("font_size_req")
+        text_color = ai_result.get("text_color", "#FFFFFF")
+        stroke_color = ai_result.get("stroke_color", "#000000")
+
+        if not visual_prompt:
+            raise ValueError("visual_prompt 생성 실패")
+
+        logger.info(f"🎨 이미지 생성 시작")
+
+        # 4️⃣ 이미지 생성
+        final_img = generate_full_image(visual_prompt, style_category, w, h)
+
+        if final_img == "QUOTA_ERROR":
+            logger.warning("⚠️ QUOTA 초과")
+            return jsonify({
+                "error": "사용량 초과. 잠시 후 다시 시도해주세요."
+            }), 429
+
+        if final_img is None:
+            raise RuntimeError("generate_full_image()가 None 반환")
+
+        logger.info(f"🖼 이미지 생성 완료 | mode={final_img.mode}")
+
+        # 5️⃣ 텍스트 합성
+        if title_text and str(title_text).strip():
+            logger.info("✍️ 타이틀 합성")
+            final_img = draw_text_overlay(
+                final_img,
+                title_text,
+                position=title_pos,
+                is_title=True,
+                requested_size=font_size_req,
+                text_color=text_color,
+                stroke_color=stroke_color
+            )
+
+        if bottom_text and str(bottom_text).strip():
+            logger.info("✍️ 하단 텍스트 합성")
+            final_img = draw_text_overlay(
+                final_img,
+                bottom_text,
+                position=bottom_pos,
+                is_title=False,
+                requested_size=font_size_req,
+                text_color=text_color,
+                stroke_color=stroke_color
+            )
+
+        # 6️⃣ 저장
+        logger.info("💾 이미지 저장 시작")
+
         byte_arr = io.BytesIO()
-        final_img.save(byte_arr, format=img_format)
-        encoded_img = base64.b64encode(byte_arr.getvalue()).decode('utf-8')
 
-        logger.info(f"✅ Image generated successfully | IP: {user_ip}")
+        if img_format == "JPEG":
+            if final_img.mode != "RGB":
+                logger.info(f"🔄 RGB 변환 ({final_img.mode} → RGB)")
+                final_img = final_img.convert("RGB")
+
+        final_img.save(byte_arr, format=img_format)
+        byte_arr.seek(0)
+
+        encoded_img = base64.b64encode(byte_arr.read()).decode("utf-8")
+
+        logger.info("✅ 이미지 저장 완료")
+
+        logger.info("===== 🟢 SUCCESS =====")
+
         return jsonify({
             "image_url": f"data:image/{img_format.lower()};base64,{encoded_img}",
             "status": "success"
         })
-    else:
-        logger.error("❌ 이미지 생성 실패 (모든 시도 실패)")
-        return jsonify({"error": "AI 서비스 장애 (이미지 생성 실패)"}), 500
+
+    except Exception as e:
+        logger.error("❌❌❌ 서버 에러 발생 ❌❌❌")
+        logger.error(str(e))
+        logger.error(traceback.format_exc())
+
+        return jsonify({
+            "error": "서버 내부 오류",
+            "detail": str(e)
+        }), 500
 
 # ---------------------------
-# [엔드포인트] 이미지 수정 (원본 소스 A 유지)
+# [엔드포인트] 이미지 수정 (Vertex AI + Gemini + 스타일 필터 + 텍스트 합성)
 # ---------------------------
 @app.route("/edit-image", methods=["POST"])
 def edit_image():
-    if "image" not in request.files:
-        return jsonify({"error": "이미지 파일이 없습니다."}), 400
-    if "prompt" not in request.form:
-        return jsonify({"error": "프롬프트가 없습니다."}), 400
-
-    image_file = request.files["image"]
-    prompt = request.form["prompt"]
-
+    import traceback
     try:
-        # 1. 원본 이미지 열기
-        image = Image.open(image_file)
-        original_width, original_height = image.size
+        print("\n========== [edit_image] 요청 진입 ==========")
 
-        # 2. OpenAI API용 BytesIO 준비
-        img_byte_arr = io.BytesIO()
-        image.save(img_byte_arr, format="PNG")
-        img_byte_arr.seek(0)
+        # 1️⃣ 파일 및 폼 데이터 확인
+        if "image" not in request.files:
+            raise ValueError("❌ 데이터 누락: image 파일이 없습니다.")
+        if "prompt" not in request.form:
+            raise ValueError("❌ 데이터 누락: prompt가 없습니다.")
 
-        files = {
-            "image": (secure_filename(image_file.filename), img_byte_arr, "image/png"),
-        }
+        img_file = request.files["image"]
+        raw_prompt = request.form["prompt"].strip()
+        size_input = request.form.get("size", "1480x600")
+        format_input = request.form.get("format", "PNG").upper()
+        print(f"👉 프롬프트: {raw_prompt} | 사이즈: {size_input} | 포맷: {format_input}")
 
-        data = {
-            "prompt": prompt,
-            "model": "gpt-image-1",
-            "n": 1
-            # size 파라미터 제거 → OpenAI Edit API 기본값 사용 (1024x1024)
-        }
+        # 2️⃣ 사이즈 파싱
+        try:
+            if "x" in size_input.lower():
+                w, h = map(int, size_input.lower().split("x"))
+            else:
+                w = h = int(size_input)
+        except:
+            w, h = 1480, 600
+        print(f"📐 이미지 최종 사이즈: {w}x{h}")
 
-        # 3. OpenAI Image Edit API 요청
-        response = requests.post(
-            "https://api.openai.com/v1/images/edits",
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-            files=files,
-            data=data
+        # 3️⃣ 파일 열기 (PIL)
+        input_pil_image = Image.open(img_file)
+        if input_pil_image.mode in ('RGBA', 'P'):
+            input_pil_image = input_pil_image.convert('RGB')
+
+        # 4️⃣ Gemini 분석
+        try:
+            ai_result = generate_universal_prompt(raw_prompt)
+            visual_prompt = ai_result.get("visual_prompt", raw_prompt)
+            style_category = ai_result.get("style_category", "REALISM")
+            title_text = ai_result.get("title_text", "")
+            title_pos = ai_result.get("title_position", "TOP_CENTER")
+            bottom_text = ai_result.get("bottom_text", "")
+            bottom_pos = ai_result.get("bottom_position", "BOTTOM_CENTER")
+            font_size_req = ai_result.get("font_size_req")
+            text_color = ai_result.get("text_color", "#FFFFFF")
+            stroke_color = ai_result.get("stroke_color", "#000000")
+            print("✅ Gemini 분석 완료")
+        except Exception as e:
+            print(f"⚠️ Gemini 분석 실패: {e}")
+            visual_prompt = raw_prompt
+            style_category = "REALISM"
+            title_text = ""
+            title_pos = "TOP_CENTER"
+            bottom_text = ""
+            bottom_pos = "BOTTOM_CENTER"
+            font_size_req = None
+            text_color = "#FFFFFF"
+            stroke_color = "#000000"
+
+        # 5️⃣ Vertex AI Imagen 모델 호출 (이미지 수정)
+        model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-001")
+        negative_prompt = get_adaptive_negative_prompt(style_category)
+        print("🎨 Vertex AI Imagen 이미지 수정 요청 전송...")
+
+        response = model.edit_image(
+            base_image=input_pil_image,
+            prompt=visual_prompt,
+            negative_prompt=negative_prompt,
+            number_of_images=1,
+            language="en",
         )
 
-        if response.status_code != 200:
-            raise Exception(response.text)
+        if not response.images:
+            raise ValueError("❌ AI가 이미지를 반환하지 않았습니다. (Safety Filter 가능성)")
 
-        # 4. 결과 디코딩
-        result_json = response.json()
-        image_base64 = result_json["data"][0]["b64_json"]
-        edited_image_data = base64.b64decode(image_base64)
+        # AI 결과 이미지
+        final_img = response.images[0]
 
-        # 5. 원본 크기로 리사이즈 (과금 최소화 + 사용자 입력 크기 보장)
-        edited_image = Image.open(io.BytesIO(edited_image_data))
-        edited_image = edited_image.resize((original_width, original_height), Image.LANCZOS)
+        # 6️⃣ 이미지 후처리: 리사이즈 + 선명도/대비/채도
+        final_img = final_img.resize((w, h), Image.LANCZOS)
+        final_img = ImageEnhance.Sharpness(final_img).enhance(1.5)
+        final_img = ImageEnhance.Contrast(final_img).enhance(1.2)
+        final_img = ImageEnhance.Color(final_img).enhance(1.15)
 
-        output_bytes = io.BytesIO()
-        edited_image.save(output_bytes, format="PNG")
-        output_bytes.seek(0)
+        # 7️⃣ 텍스트 합성 (타이틀 + 하단)
+        if title_text.strip():
+            final_img = draw_text_overlay(
+                final_img,
+                title_text,
+                position=title_pos,
+                is_title=True,
+                requested_size=font_size_req,
+                text_color=text_color,
+                stroke_color=stroke_color
+            )
 
-        # 6. 반환
-        return send_file(
-            output_bytes,
-            mimetype="image/png",
-            as_attachment=False,
-            download_name="edited.png"
-        )
+        if bottom_text.strip():
+            final_img = draw_text_overlay(
+                final_img,
+                bottom_text,
+                position=bottom_pos,
+                is_title=False,
+                requested_size=font_size_req,
+                text_color=text_color,
+                stroke_color=stroke_color
+            )
+
+        # 8️⃣ 이미지 포맷 변환 및 반환
+        FORMAT_MAP = {"JPG": "JPEG", "JPEG": "JPEG", "PNG": "PNG"}
+        img_format = FORMAT_MAP.get(format_input, "PNG")
+
+        byte_arr = io.BytesIO()
+        if img_format == "JPEG" and final_img.mode != "RGB":
+            final_img = final_img.convert("RGB")
+
+        final_img.save(byte_arr, format=img_format)
+        byte_arr.seek(0)
+
+        encoded_img = base64.b64encode(byte_arr.read()).decode("utf-8")
+        print("🚀 이미지 수정 완료, 결과 전송 중...")
+
+        return jsonify({
+            "image_url": f"data:image/{img_format.lower()};base64,{encoded_img}",
+            "status": "success"
+        })
 
     except Exception as e:
-        logger.error(f"Edit Image Error: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        error_trace = traceback.format_exc()
+        print(f"\n🚨 서버 에러 발생:\n{error_trace}\n")
+        return jsonify({
+            "error": f"서버 에러: {str(e)}",
+            "detail": error_trace
+        }), 500
 
 
 # ---------------------------
