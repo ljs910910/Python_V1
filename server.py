@@ -635,12 +635,14 @@ def generate_auto_banner():
 # ---------------------------
 # [엔드포인트] 이미지 수정 (Vertex AI + Gemini + 스타일 필터 + 텍스트 합성)
 # ---------------------------
-# ---------------------------
-# [엔드포인트] 이미지 수정 (Vertex AI + Gemini + 스타일 필터 + 텍스트 합성)
-# ---------------------------
 @app.route("/edit-image", methods=["POST"])
 def edit_image():
-    import traceback
+    # ---------------------------------------------------------
+    # [필수 임포트] 상단에 없는 라이브러리만 여기서 임포트합니다.
+    # ---------------------------------------------------------
+    import tempfile 
+    from vertexai.preview.vision_models import Image as VertexImage # Vertex AI 이미지 래퍼 클래스
+
     try:
         print("\n========== [edit_image] 요청 진입 ==========")
 
@@ -654,6 +656,7 @@ def edit_image():
         raw_prompt = request.form["prompt"].strip()
         size_input = request.form.get("size", "1480x600")
         format_input = request.form.get("format", "PNG").upper()
+
         print(f"👉 프롬프트: {raw_prompt} | 사이즈: {size_input} | 포맷: {format_input}")
 
         # 2️⃣ 사이즈 파싱
@@ -666,117 +669,112 @@ def edit_image():
             w, h = 1480, 600
         print(f"📐 이미지 최종 사이즈: {w}x{h}")
 
-        # 3️⃣ 파일 열기 (PIL)
-        input_pil_image = Image.open(img_file)
-        if input_pil_image.mode in ('RGBA', 'P'):
-            input_pil_image = input_pil_image.convert('RGB')
+        # 3️⃣ 🔥 핵심 수정: 임시 파일 저장으로 에러 원천 차단
+        # Vertex AI SDK는 파일 경로(load_from_file)를 통해 객체를 생성할 때 가장 안정적입니다.
+        # BytesIO 객체를 직접 넘기면 '_gcs_uri' 속성 에러가 발생하므로 이를 우회합니다.
+        temp_path = None
+        filename = secure_filename(img_file.filename)
+        temp_path = os.path.join(tempfile.gettempdir(), f"edit_{int(time.time())}_{filename}")
+        img_file.save(temp_path)
 
-        # 4️⃣ Gemini 분석
         try:
-            ai_result = generate_universal_prompt(raw_prompt)
-            visual_prompt = ai_result.get("visual_prompt", raw_prompt)
-            style_category = ai_result.get("style_category", "REALISM")
-            title_text = ai_result.get("title_text", "")
-            title_pos = ai_result.get("title_position", "TOP_CENTER")
-            bottom_text = ai_result.get("bottom_text", "")
-            bottom_pos = ai_result.get("bottom_position", "BOTTOM_CENTER")
-            font_size_req = ai_result.get("font_size_req")
-            text_color = ai_result.get("text_color", "#FFFFFF")
-            stroke_color = ai_result.get("stroke_color", "#000000")
-            print("✅ Gemini 분석 완료")
-        except Exception as e:
-            print(f"⚠️ Gemini 분석 실패: {e}")
-            visual_prompt = raw_prompt
-            style_category = "REALISM"
-            title_text = ""
-            title_pos = "TOP_CENTER"
-            bottom_text = ""
-            bottom_pos = "BOTTOM_CENTER"
-            font_size_req = None
-            text_color = "#FFFFFF"
-            stroke_color = "#000000"
+            # Vertex AI 전용 이미지 객체 생성
+            vertex_image = VertexImage.load_from_file(temp_path)
 
-        # 5️⃣ Vertex AI Imagen 모델 호출 (이미지 수정)
-        model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-001")
-        negative_prompt = get_adaptive_negative_prompt(style_category)
-        print("🎨 Vertex AI Imagen 이미지 수정 요청 전송...")
+            # 4️⃣ Gemini 분석 (프롬프트 최적화 및 스타일 추출)
+            try:
+                ai_result = generate_universal_prompt(raw_prompt)
+                visual_prompt = ai_result.get("visual_prompt", raw_prompt)
+                style_category = ai_result.get("style_category", "REALISM")
+                title_text = ai_result.get("title_text", "")
+                title_pos = ai_result.get("title_position", "TOP_CENTER")
+                bottom_text = ai_result.get("bottom_text", "")
+                bottom_pos = ai_result.get("bottom_position", "BOTTOM_CENTER")
+                font_size_req = ai_result.get("font_size_req")
+                text_color = ai_result.get("text_color", "#FFFFFF")
+                stroke_color = ai_result.get("stroke_color", "#000000")
+                print("✅ Gemini 분석 완료")
+            except Exception as e:
+                print(f"⚠️ Gemini 분석 실패(기본값 사용): {e}")
+                visual_prompt = raw_prompt
+                style_category = "REALISM"
+                title_text, bottom_text = "", ""
+                title_pos, bottom_pos = "TOP_CENTER", "BOTTOM_CENTER"
+                font_size_req, text_color, stroke_color = None, "#FFFFFF", "#000000"
 
-        # 🔹 수정: PIL.Image → BytesIO 로 변환 후 전달 (GCS URI 오류 방지)
-        base_image_bytes = io.BytesIO()
-        save_format = "PNG" if input_pil_image.mode == "RGBA" else "JPEG"
-        input_pil_image.save(base_image_bytes, format=save_format)
-        base_image_bytes.seek(0)
+            # 5️⃣ Vertex AI Imagen 모델 호출 (이미지 수정 실행)
+            # 상단에 ImageGenerationModel이 임포트 되어 있다고 가정합니다.
+            model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-001")
+            negative_prompt = get_adaptive_negative_prompt(style_category)
+            print("🎨 Vertex AI Imagen 이미지 수정 요청 전송...")
 
-        response = model.edit_image(
-            base_image=base_image_bytes,
-            prompt=visual_prompt,
-            negative_prompt=negative_prompt,
-            number_of_images=1,
-            language="en",
-        )
-
-        if not response.images:
-            raise ValueError("❌ AI가 이미지를 반환하지 않았습니다. (Safety Filter 가능성)")
-
-        # AI 결과 이미지
-        final_img = response.images[0]
-
-        # 6️⃣ 이미지 후처리: 리사이즈 + 선명도/대비/채도
-        final_img = final_img.resize((w, h), Image.LANCZOS)
-        final_img = ImageEnhance.Sharpness(final_img).enhance(1.5)
-        final_img = ImageEnhance.Contrast(final_img).enhance(1.2)
-        final_img = ImageEnhance.Color(final_img).enhance(1.15)
-
-        # 7️⃣ 텍스트 합성 (타이틀 + 하단)
-        if title_text.strip():
-            final_img = draw_text_overlay(
-                final_img,
-                title_text,
-                position=title_pos,
-                is_title=True,
-                requested_size=font_size_req,
-                text_color=text_color,
-                stroke_color=stroke_color
+            response = model.edit_image(
+                base_image=vertex_image,
+                prompt=visual_prompt,
+                negative_prompt=negative_prompt,
+                number_of_images=1,
+                language="en",
             )
 
-        if bottom_text.strip():
-            final_img = draw_text_overlay(
-                final_img,
-                bottom_text,
-                position=bottom_pos,
-                is_title=False,
-                requested_size=font_size_req,
-                text_color=text_color,
-                stroke_color=stroke_color
-            )
+            if not response.images:
+                raise ValueError("❌ AI가 이미지를 반환하지 않았습니다. (Safety Filter 가능성)")
 
-        # 8️⃣ 이미지 포맷 변환 및 반환
-        FORMAT_MAP = {"JPG": "JPEG", "JPEG": "JPEG", "PNG": "PNG"}
-        img_format = FORMAT_MAP.get(format_input, "PNG")
+            # 결과 이미지를 PIL 객체로 변환
+            final_img = response.images[0]._pil_image
 
-        byte_arr = io.BytesIO()
-        if img_format == "JPEG" and final_img.mode != "RGB":
-            final_img = final_img.convert("RGB")
+            # 6️⃣ 이미지 후처리: 리사이즈 및 화질 개선
+            final_img = final_img.resize((w, h), Image.LANCZOS)
+            final_img = ImageEnhance.Sharpness(final_img).enhance(1.5)
+            final_img = ImageEnhance.Contrast(final_img).enhance(1.2)
+            final_img = ImageEnhance.Color(final_img).enhance(1.15)
 
-        final_img.save(byte_arr, format=img_format)
-        byte_arr.seek(0)
+            # 7️⃣ 텍스트 합성 (타이틀 + 하단 문구)
+            if title_text.strip():
+                final_img = draw_text_overlay(
+                    final_img, title_text, position=title_pos, is_title=True,
+                    requested_size=font_size_req, text_color=text_color, stroke_color=stroke_color
+                )
 
-        encoded_img = base64.b64encode(byte_arr.read()).decode("utf-8")
-        print("🚀 이미지 수정 완료, 결과 전송 중...")
+            if bottom_text.strip():
+                final_img = draw_text_overlay(
+                    final_img, bottom_text, position=bottom_pos, is_title=False,
+                    requested_size=font_size_req, text_color=text_color, stroke_color=stroke_color
+                )
 
-        return jsonify({
-            "image_url": f"data:image/{img_format.lower()};base64,{encoded_img}",
-            "status": "success"
-        })
+            # 8️⃣ 결과 반환 처리 (포맷 변환 및 Base64 인코딩)
+            FORMAT_MAP = {"JPG": "JPEG", "JPEG": "JPEG", "PNG": "PNG"}
+            img_format = FORMAT_MAP.get(format_input, "PNG")
+
+            byte_arr = io.BytesIO()
+            if img_format == "JPEG" and final_img.mode != "RGB":
+                final_img = final_img.convert("RGB")
+
+            final_img.save(byte_arr, format=img_format)
+            byte_arr.seek(0)
+
+            encoded_img = base64.b64encode(byte_arr.read()).decode("utf-8")
+            print("🚀 이미지 수정 완료 및 전송 준비")
+
+            return jsonify({
+                "image_url": f"data:image/{img_format.lower()};base64,{encoded_img}",
+                "status": "success"
+            })
+
+        finally:
+            # 사용이 끝난 임시 파일 삭제 (서버 용량 관리)
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
 
     except Exception as e:
         error_trace = traceback.format_exc()
-        print(f"\n🚨 서버 에러 발생:\n{error_trace}\n")
+        print(f"\n🚨 [edit_image] 서버 에러 발생:\n{error_trace}")
         return jsonify({
             "error": f"서버 에러: {str(e)}",
             "detail": error_trace
         }), 500
-
 
 # ---------------------------
 # [엔드포인트] 메일 서버 (기존 소스 A 유지)
@@ -829,3 +827,4 @@ if __name__ == "__main__":
     threading.Thread(target=keep_alive, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
