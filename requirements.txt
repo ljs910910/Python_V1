@@ -1,10 +1,12 @@
 flask==2.3.2
 flask-cors==3.0.10
-google-generativeai>=0.8.6
 python-dotenv==1.0.0
 requests
-openai==0.28.0
+pillow
+google-generativeai>=0.8.6
+# [필수 추가] Vertex AI (Imagen) 구동용
+google-cloud-aiplatform
+# [필수 추가] 코드 내 import openai 구문 해결용
+openai
+# [권장] 배포 서버(Render) 구동용
 gunicorn
-Pillow>=10.0.0
-Werkzeug>=2.3.7
-
