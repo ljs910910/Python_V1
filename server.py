@@ -159,11 +159,24 @@ def draw_text_overlay(image, text, position="BOTTOM_CENTER", is_title=False, req
         upscaled_image = image.resize((target_w, target_h), Image.LANCZOS)
         draw = ImageDraw.Draw(upscaled_image)
 
-        # 폰트 로드 설정
-        font_path = "C:/Windows/Fonts/malgunbd.ttf"
-        if not os.path.exists(font_path): font_path = "C:/Windows/Fonts/malgun.ttf"
-        custom_font = os.path.join(BASE_DIR, "Paperlogy-6SemiBold.ttf")
-        if os.path.exists(custom_font): font_path = custom_font
+        # --- 폰트 로드 설정 (상용 서버 최적화) ---
+        # 1. Git에 함께 올린 커스텀 폰트를 1순위로 설정
+        custom_font_path = os.path.join(BASE_DIR, "Paperlogy-6SemiBold.ttf")
+
+        if os.path.exists(custom_font_path):
+            font_path = custom_font_path
+        else:
+            # 2. 커스텀 폰트가 없을 경우의 대비책 (윈도우/리눅스 공용 후보군)
+            font_candidates = [
+                "C:/Windows/Fonts/malgunbd.ttf",  # 로컬 윈도우
+                "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",  # 리눅스 나눔
+                "DejaVuSans.ttf"  # 리눅스 기본
+            ]
+            font_path = None
+            for f in font_candidates:
+                if os.path.exists(f):
+                    font_path = f
+                    break
 
         # [3] 초기 폰트 크기 설정 (비율 넉넉하게 상향! 기존 8%->15%, 4%->8%)
         ref_size = min(target_w, target_h)
@@ -869,3 +882,4 @@ if __name__ == "__main__":
     threading.Thread(target=keep_alive, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+    
