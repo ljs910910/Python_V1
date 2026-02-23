@@ -123,9 +123,11 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 
+
 # 파일 확장자 체크
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 
 def keep_alive():
     time.sleep(20)
@@ -136,86 +138,87 @@ def keep_alive():
             pass
         time.sleep(780)
 
+
 # =======================================================
 # [4] 신규 통합 기능: 이미지 생성 로직 (Vertex AI + Gemini)
 # =======================================================
-# --- 기능 1: 만능 텍스트 합성기 (슈퍼샘플링 적용: 화질 2배 강화) ---
+# --- 기능 1: 만능 텍스트 합성기 (슈퍼샘플링 + 폰트 확대 + 다중 줄바꿈 + 유동적 정렬) ---
 def draw_text_overlay(image, text, position="BOTTOM_CENTER", is_title=False, requested_size=None, text_color="white",
                       stroke_color="black"):
-    # 텍스트가 없거나 빈 문자열이면 바로 리턴
     if not text or not isinstance(text, str) or text.strip() == "":
         return image
 
     try:
-        # [핵심 기술: 슈퍼샘플링]
-        # 이미지를 2배로 뻥튀기해서 글씨를 쓰고 다시 줄이면 계단 현상이 사라지고 폰트가 쨍해집니다.
-        original_w, original_h = image.size
-        scale_factor = 2  # 2배 확대
+        # [1] 줄바꿈 정규화: AI가 \n을 문자열로 보낼 경우를 대비해 실제 줄바꿈으로 변환
+        text = text.replace("\\n", "\n")
 
-        # 고품질 리사이징으로 캔버스 확대
+        # [2] 슈퍼샘플링 (화질 저하 방지용 2배 확대)
+        original_w, original_h = image.size
+        scale_factor = 2
         target_w, target_h = original_w * scale_factor, original_h * scale_factor
         upscaled_image = image.resize((target_w, target_h), Image.LANCZOS)
-
         draw = ImageDraw.Draw(upscaled_image)
 
-        # 폰트 로드 (윈도우 맑은 고딕 우선 적용 -> 없으면 나눔고딕 -> 없으면 기본)
-        font_path = "C:/Windows/Fonts/malgunbd.ttf"  # 맑은 고딕 볼드
-        if not os.path.exists(font_path):
-            font_path = "C:/Windows/Fonts/malgun.ttf"
-
-        # 커스텀 폰트가 같은 폴더에 있다면 그걸 최우선으로
+        # 폰트 로드 설정
+        font_path = "C:/Windows/Fonts/malgunbd.ttf"
+        if not os.path.exists(font_path): font_path = "C:/Windows/Fonts/malgun.ttf"
         custom_font = os.path.join(BASE_DIR, "Paperlogy-6SemiBold.ttf")
-        if os.path.exists(custom_font):
-            font_path = custom_font
+        if os.path.exists(custom_font): font_path = custom_font
 
-        # 폰트 크기 결정 (캔버스가 2배 커졌으니 폰트도 2배 키워야 함)
+        # [3] 초기 폰트 크기 설정 (비율 넉넉하게 상향! 기존 8%->15%, 4%->8%)
+        ref_size = min(target_w, target_h)
         if requested_size is not None and isinstance(requested_size, int) and requested_size > 0:
             font_size = requested_size * scale_factor
         else:
-            # 자동 비율: 제목은 8%, 부제는 4%
-            font_size = int(target_w * (0.08 if is_title else 0.04))
+            font_size = int(ref_size * (0.15 if is_title else 0.08))
 
-        # 최소/최대 보정
-        font_size = max(20, min(font_size, target_h))
+        # [4] 사용자의 명시적 줄바꿈을 유지하면서 크기만 최적화
+        max_width = target_w * 0.90
+        max_height = target_h * 0.40  # 텍스트가 차지할 수 있는 최대 높이 설정
 
-        # 외곽선 두께
-        stroke_width = max(2, int(font_size * 0.08))
+        while font_size >= 20:
+            try:
+                font = ImageFont.truetype(font_path, font_size)
+            except:
+                font = ImageFont.load_default()
+                break
 
-        try:
-            font = ImageFont.truetype(font_path, font_size)
-        except:
-            logger.warning("⚠️ 폰트 로드 실패, 기본 폰트 사용")
-            font = ImageFont.load_default()
+            stroke_width = max(2, int(font_size * 0.08))
+            line_spacing = int(font_size * 0.2)
 
-        # 텍스트 크기 계산
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
-
-        # 글자가 이미지 너비를 넘으면 폰트 줄이기
-        max_text_width = target_w * 0.9
-        while text_w > max_text_width and font_size > 20:
-            font_size = int(font_size * 0.95)
-            font = ImageFont.truetype(font_path, font_size)
-            bbox = draw.textbbox((0, 0), text, font=font)
+            # 명시된 텍스트 전체 덩어리의 크기를 측정 (멀티라인 전용 함수 사용)
+            bbox = draw.multiline_textbbox((0, 0), text, font=font, stroke_width=stroke_width, spacing=line_spacing)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
-            stroke_width = max(2, int(font_size * 0.08))
 
-        # 여백 계산
+            # 텍스트 덩어리가 캔버스 안에 예쁘게 들어오면 스톱
+            if text_w <= max_width and text_h <= max_height:
+                break
+            else:
+                # 넘어간다면 폰트 크기를 5%씩 점진적으로 축소
+                font_size = int(font_size * 0.95)
+
+        # [5] 위치 및 동적 정렬(Align) 계산
         margin_x = int(target_w * 0.05)
         margin_y = int(target_h * 0.05)
-
         x, y = 0, 0
         pos = position.upper()
 
+        # 기본 정렬 설정
+        text_align = "center"
+
+        # 좌우 위치에 따른 x좌표 및 텍스트 내부 정렬(align) 동기화
         if "LEFT" in pos:
             x = margin_x
+            text_align = "left"
         elif "RIGHT" in pos:
             x = target_w - text_w - margin_x
+            text_align = "right"
         else:
             x = (target_w - text_w) // 2
+            text_align = "center"
 
+        # 상하 위치 계산
         if "TOP" in pos:
             y = margin_y
         elif "BOTTOM" in pos:
@@ -223,17 +226,18 @@ def draw_text_overlay(image, text, position="BOTTOM_CENTER", is_title=False, req
         else:
             y = (target_h - text_h) // 2
 
-        # 텍스트 그리기
+        # 최종 텍스트 그리기 (위치에 따라 동적으로 변하는 align 적용)
         try:
-            draw.text((x, y), text, font=font, fill=text_color, stroke_width=stroke_width, stroke_fill=stroke_color)
+            draw.multiline_text((x, y), text, font=font, fill=text_color, stroke_width=stroke_width,
+                                stroke_fill=stroke_color, spacing=line_spacing, align=text_align)
         except Exception as color_error:
             logger.warning(f"⚠️ 색상 적용 실패 ({text_color}) -> 기본값 적용")
-            draw.text((x, y), text, font=font, fill="white", stroke_width=stroke_width, stroke_fill="black")
+            draw.multiline_text((x, y), text, font=font, fill="white", stroke_width=stroke_width, stroke_fill="black",
+                                spacing=line_spacing, align=text_align)
 
-        # 슈퍼샘플링 축소
+        # 슈퍼샘플링 축소 및 결과 반환
         final_image = upscaled_image.resize((original_w, original_h), Image.LANCZOS)
-
-        logger.info(f"✍️ [슈퍼샘플링 합성 완료] '{text}' ({font_size//scale_factor}px)")
+        logger.info(f"✍️ [텍스트 합성 완료] '{text[:10]}...' ({font_size // scale_factor}px, Align: {text_align})")
         return final_image
 
     except Exception as e:
@@ -281,6 +285,9 @@ def generate_universal_prompt(user_input):
         - **Translate to Generic Descriptions**:
           - "Shin-chan" -> "A generic cute 2D cartoon boy with a round head".
           - "Iron Man" -> "A futuristic red and gold armored robot".
+
+        [CRITICAL RULE 6: TEXT LINE BREAKS]
+        - If the user provides multiple quoted strings (e.g., "Line 1" "Line 2") or requests line breaks, you MUST combine them using the `\n` character in `title_text` or `bottom_text` (e.g., "Line 1\nLine 2"). Do not include the quotes in the output string.
 
         [Output JSON]:
         {
@@ -447,6 +454,7 @@ def view_logs():
     html_content += "</body></html>"
     return html_content
 
+
 # ---------------------------
 # [엔드포인트] AI 챗봇 (기존 소스 A 유지)
 # ---------------------------
@@ -501,6 +509,7 @@ def chat():
 @app.route("/generate-image", methods=["POST"])
 def generate_auto_banner():
     import traceback
+    import re  # 쌍따옴표 추출을 위한 정규표현식 모듈 추가
     try:
         logger.info("===== 🔵 /generate-image START =====")
 
@@ -545,9 +554,9 @@ def generate_auto_banner():
         style_category = ai_result.get("style_category", "REALISM")
         visual_prompt = ai_result.get("visual_prompt")
 
-        title_text = ai_result.get("title_text")
+        raw_title_text = ai_result.get("title_text", "")
         title_pos = ai_result.get("title_position", "TOP_CENTER")
-        bottom_text = ai_result.get("bottom_text")
+        raw_bottom_text = ai_result.get("bottom_text", "")
         bottom_pos = ai_result.get("bottom_position", "BOTTOM_CENTER")
 
         font_size_req = ai_result.get("font_size_req")
@@ -556,6 +565,34 @@ def generate_auto_banner():
 
         if not visual_prompt:
             raise ValueError("visual_prompt 생성 실패")
+
+        # =======================================================
+        # [🌟 핵심 추가 로직] 쌍따옴표(" ") 기반 명시적 줄바꿈 처리
+        # =======================================================
+        def format_text_lines(text_data):
+            if not text_data:
+                return ""
+
+            text_str = str(text_data).strip()
+
+            # 1) 문자열 내에 쌍따옴표(" ")로 묶인 텍스트 그룹 찾기
+            matches = re.findall(r'"([^"]+)"', text_str)
+
+            if len(matches) > 1:
+                # 예: '"TEST 한줄" "TEST 두줄"' -> 줄바꿈(\n)으로 합침
+                return "\n".join(matches)
+            elif len(matches) == 1:
+                # 쌍따옴표가 하나만 있다면 껍데기만 벗겨냄
+                text_str = matches[0]
+
+            # 2) AI가 의도적으로 텍스트 내에 \n을 텍스트 형태로 보낸 경우를 위한 대비책
+            return text_str.replace("\\n", "\n")
+
+        # 텍스트 데이터 정제 실행
+        title_text = format_text_lines(raw_title_text)
+        bottom_text = format_text_lines(raw_bottom_text)
+
+        logger.info(f"📝 최종 텍스트 추출 완료 - Title: {repr(title_text)} / Bottom: {repr(bottom_text)}")
 
         logger.info(f"🎨 이미지 생성 시작")
 
@@ -632,6 +669,7 @@ def generate_auto_banner():
             "detail": str(e)
         }), 500
 
+
 # ---------------------------
 # [엔드포인트] 이미지 수정 (Vertex AI + Gemini + 스타일 필터 + 텍스트 합성)
 # ---------------------------
@@ -640,8 +678,8 @@ def edit_image():
     # ---------------------------------------------------------
     # [필수 임포트] 상단에 없는 라이브러리만 여기서 임포트합니다.
     # ---------------------------------------------------------
-    import tempfile 
-    from vertexai.preview.vision_models import Image as VertexImage # Vertex AI 이미지 래퍼 클래스
+    import tempfile
+    from vertexai.preview.vision_models import Image as VertexImage  # Vertex AI 이미지 래퍼 클래스
 
     try:
         print("\n========== [edit_image] 요청 진입 ==========")
@@ -776,12 +814,14 @@ def edit_image():
             "detail": error_trace
         }), 500
 
+
 # ---------------------------
 # [엔드포인트] 메일 서버 (기존 소스 A 유지)
 # ---------------------------
 POSTMARK_API_KEY = os.environ.get("POSTMARK_API_KEY")
 SENDER_EMAIL = "jslee@rootlabs.co.kr"  # 인증된 발신자 이메일
 RECIPIENT_EMAIL = "jslee@rootlabs.co.kr"
+
 
 @app.route("/send-mail", methods=["POST"])
 def send_mail():
@@ -819,12 +859,13 @@ def send_mail():
     except Exception as e:
         return jsonify({"result": "error", "message": str(e)}), 500
 
+
 @app.route('/', methods=['GET'])
 def home():
     return "ROOTLABS Unified AI Server is Online"
+
 
 if __name__ == "__main__":
     threading.Thread(target=keep_alive, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
