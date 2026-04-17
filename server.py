@@ -1,8 +1,13 @@
 from flask import Flask, request, jsonify, Response, send_file
 from flask_cors import CORS
+from werkzeug.security import generate_password_hash, check_password_hash
+import pymysql
+import string
+import random
 import google.generativeai as genai
 import vertexai
 from vertexai.preview.vision_models import ImageGenerationModel
+from vertexai.preview.vision_models import Image as VertexImage  # ⭐ edit_image 전용
 import os
 import threading
 import time
@@ -18,6 +23,7 @@ import warnings
 from PIL import Image, ImageEnhance, ImageFont, ImageDraw, ImageColor
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
+import tempfile
 
 # ---------------------------
 # [1] 환경 변수 로드 및 설정
@@ -159,24 +165,11 @@ def draw_text_overlay(image, text, position="BOTTOM_CENTER", is_title=False, req
         upscaled_image = image.resize((target_w, target_h), Image.LANCZOS)
         draw = ImageDraw.Draw(upscaled_image)
 
-        # --- 폰트 로드 설정 (상용 서버 최적화) ---
-        # 1. Git에 함께 올린 커스텀 폰트를 1순위로 설정
-        custom_font_path = os.path.join(BASE_DIR, "Paperlogy-6SemiBold.ttf")
-
-        if os.path.exists(custom_font_path):
-            font_path = custom_font_path
-        else:
-            # 2. 커스텀 폰트가 없을 경우의 대비책 (윈도우/리눅스 공용 후보군)
-            font_candidates = [
-                "C:/Windows/Fonts/malgunbd.ttf",  # 로컬 윈도우
-                "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",  # 리눅스 나눔
-                "DejaVuSans.ttf"  # 리눅스 기본
-            ]
-            font_path = None
-            for f in font_candidates:
-                if os.path.exists(f):
-                    font_path = f
-                    break
+        # 폰트 로드 설정
+        font_path = "C:/Windows/Fonts/malgunbd.ttf"
+        if not os.path.exists(font_path): font_path = "C:/Windows/Fonts/malgun.ttf"
+        custom_font = os.path.join(BASE_DIR, "Paperlogy-6SemiBold.ttf")
+        if os.path.exists(custom_font): font_path = custom_font
 
         # [3] 초기 폰트 크기 설정 (비율 넉넉하게 상향! 기존 8%->15%, 4%->8%)
         ref_size = min(target_w, target_h)
@@ -338,8 +331,8 @@ def generate_universal_prompt(user_input):
 
 # --- 기능 3: 범용 스타일 필터 (부정 프롬프트) ---
 def get_adaptive_negative_prompt(style_category):
-    # 공통 부정어 (흐림 방지 포함)
-    base_negative = "text, watermark, signature, username, error, writing, copyright, cropped, low quality, ugly, distorted, bad anatomy, overlapping, blending, blur, blurry, bokeh, shallow depth of field, tilt-shift, macro lens, cinematic blur, out of focus"
+    # [⭐ 삽입/수정됨] 텍스트 렌더링 오류(bad text, garbage), 형태 붕괴(deformed, artifact) 방지 키워드 대폭 추가
+    base_negative = "bad text, garbage, gibberish, artifact, deformed, text, watermark, signature, username, error, writing, copyright, cropped, low quality, ugly, distorted, bad anatomy, overlapping, blending, blur, blurry, bokeh, shallow depth of field, tilt-shift, macro lens, cinematic blur, out of focus"
 
     if style_category == "SIMPLE_2D":
         # 단순 만화용: 고퀄리티 차단
@@ -359,7 +352,7 @@ def get_adaptive_negative_prompt(style_category):
 
 # --- 기능 4: Imagen 생성 엔진 (에어백 포함) ---
 def generate_full_image(prompt, style_category, width, height):
-    model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-001")
+    model = ImageGenerationModel.from_pretrained("imagen-4.0-ultra-generate-001")
 
     target_ratio = width / height
     supported_ratios = {"1:1": 1.0, "9:16": 0.5625, "16:9": 1.7778, "3:4": 0.75, "4:3": 1.3333}
@@ -375,10 +368,12 @@ def generate_full_image(prompt, style_category, width, height):
         logger.info(f"🎨 [1차 생성] {prompt[:100]}...")
         images = model.generate_images(
             prompt=prompt,
-            negative_prompt=negative_prompt,
+            negative_prompt=negative_prompt, # ⭐ 위에서 보강된 네거티브 프롬프트가 여기서 주입됨
             number_of_images=1,
             aspect_ratio=aspect_ratio,
-            language="en"
+            language="en",
+            # [⭐ 삽입됨] 인물 생성 시 구글의 안전 필터로 인해 튕기는 빈도를 줄여주는 파라미터 옵션 추가
+            person_generation="ALLOW_ADULT"
         )
         first_image = next(iter(images), None)
         if not first_image: raise ValueError("Safety Filter triggered")
@@ -404,7 +399,8 @@ def generate_full_image(prompt, style_category, width, height):
                 negative_prompt=negative_prompt,
                 number_of_images=1,
                 aspect_ratio=aspect_ratio,
-                language="en"
+                language="en",
+                person_generation="ALLOW_ADULT" # ⭐ 삽입됨
             )
             first_image = next(iter(images), None)
             if not first_image: raise ValueError("Safety Filter triggered again")
@@ -503,8 +499,7 @@ def chat():
 
         [5] AI 이미지 제작 문의 대응
         - 사용자가 "AI 이미지 제작", "ROOT AI", "이미지 생성/수정" 등에 대해 물으면, 루트랩스가 제공하는 차세대 AI 이미지 제작 솔루션을 소개할 것.
-        - "현재 루트랩스는 고도의 생성형 AI 기술을 활용한 맞춤형 이미지 제작 솔루션을 제공하고 있습니다."라고 답변을 시작해.
-        - 구체적인 사용법이나 기술 문의가 들어오면 상세한 정보를 안내해.
+        - "현재 루트랩스는 고도의 생성형 AI 기술을 활용한 맞춤형 이미지 제작 솔 파트너..." 등등
         """
         model = genai.GenerativeModel(model_name=VALID_MODEL, system_instruction=system_instruction)
         response = model.generate_content(user_message, generation_config={"temperature": 0.7, "top_p": 0.95})
@@ -684,157 +679,156 @@ def generate_auto_banner():
 
 
 # ---------------------------
-# [엔드포인트] 이미지 수정 (Vertex AI + Gemini + 스타일 필터 + 텍스트 합성)
+# [엔드포인트] 진정한 범용 정밀 수정 (배경/사물 모드 자동 스위칭 완결판)
 # ---------------------------
 @app.route("/edit-image", methods=["POST"])
 def edit_image():
-    # ---------------------------------------------------------
-    # [필수 임포트] 상단에 없는 라이브러리만 여기서 임포트합니다.
-    # ---------------------------------------------------------
-    import tempfile
-    from vertexai.preview.vision_models import Image as VertexImage  # Vertex AI 이미지 래퍼 클래스
+    import traceback, io, base64, json, re
+    from PIL import Image, ImageEnhance
+    import requests
+    import google.auth
+    import google.auth.transport.requests
 
     try:
-        print("\n========== [edit_image] 요청 진입 ==========")
+        logger.info("\n========== [Universal Master] 지능형 모드 스위칭 엔진 가동 ==========")
 
-        # 1️⃣ 파일 및 폼 데이터 확인
-        if "image" not in request.files:
-            raise ValueError("❌ 데이터 누락: image 파일이 없습니다.")
-        if "prompt" not in request.form:
-            raise ValueError("❌ 데이터 누락: prompt가 없습니다.")
-
-        img_file = request.files["image"]
-        raw_prompt = request.form["prompt"].strip()
+        img_file = request.files.get("image")
+        raw_prompt = request.form.get("prompt", "").strip()
         size_input = request.form.get("size", "1480x600")
-        format_input = request.form.get("format", "PNG").upper()
 
-        print(f"👉 프롬프트: {raw_prompt} | 사이즈: {size_input} | 포맷: {format_input}")
+        if not img_file:
+            return jsonify({"error": "이미지 파일이 없습니다."}), 400
 
-        # 2️⃣ 사이즈 파싱
-        try:
-            if "x" in size_input.lower():
-                w, h = map(int, size_input.lower().split("x"))
+        # 1️⃣ [이미지 전처리] (기존 규격 유지)
+        orig_w, orig_h = 0, 0
+        img_b64 = ""
+        with Image.open(img_file) as img:
+            if img.mode in ("RGBA", "LA", "P"):
+                canvas = Image.new("RGB", img.size, (255, 255, 255))
+                if img.mode == "RGBA":
+                    canvas.paste(img, mask=img.split()[3])
+                else:
+                    canvas.paste(img.convert("RGBA"))
+                rgb_img = canvas
             else:
-                w = h = int(size_input)
-        except:
-            w, h = 1480, 600
-        print(f"📐 이미지 최종 사이즈: {w}x{h}")
+                rgb_img = img.convert("RGB")
+            orig_w, orig_h = rgb_img.size
+            ai_ready = rgb_img.resize((1024, 1024), Image.LANCZOS)
+            img_byte_arr = io.BytesIO()
+            ai_ready.save(img_byte_arr, format="JPEG", quality=95)
+            img_b64 = base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
 
-        # 3️⃣ 🔥 핵심 수정: 임시 파일 저장으로 에러 원천 차단
-        # Vertex AI SDK는 파일 경로(load_from_file)를 통해 객체를 생성할 때 가장 안정적입니다.
-        # BytesIO 객체를 직접 넘기면 '_gcs_uri' 속성 에러가 발생하므로 이를 우회합니다.
-        temp_path = None
-        filename = secure_filename(img_file.filename)
-        temp_path = os.path.join(tempfile.gettempdir(), f"edit_{int(time.time())}_{filename}")
-        img_file.save(temp_path)
+        # 2️⃣ 🧠 [Gemini] 동적 모드 결정 및 시맨틱 타겟팅
+        model_gemini = genai.GenerativeModel("gemini-2.5-flash")
+        analysis_prompt = f"""
+        User request: "{raw_prompt}"
 
-        try:
-            # Vertex AI 전용 이미지 객체 생성
-            vertex_image = VertexImage.load_from_file(temp_path)
+        Analyze the request and return JSON ONLY:
+        {{ "prompt": "...", "mask_target": "...", "mask_mode": "..." }}
 
-            # 4️⃣ Gemini 분석 (프롬프트 최적화 및 스타일 추출)
+        [STRATEGY GUIDE]
+        1. If the user wants to change the ENVIRONMENT/SCENERY/BACKGROUND:
+           - 'mask_mode': "BACKGROUND"
+           - 'mask_target': "the entire background and scenery excluding the characters and the top-center logo"
+           - 'prompt': Describe the new background in detail + "Strictly preserve original subjects."
+        2. If the user wants to add/change an OBJECT, CHARACTER, or LOGO:
+           - 'mask_mode': "FOREGROUND"
+           - 'mask_target': "the specific object or the empty space for addition"
+           - 'prompt': Describe the change + "Seamlessly blend with original background."
+        """
+        res_gemini = model_gemini.generate_content(analysis_prompt)
+
+        # JSON 안전 파싱
+        json_match = re.search(r'\{.*\}', res_gemini.text, re.DOTALL)
+        if json_match:
             try:
-                ai_result = generate_universal_prompt(raw_prompt)
-                visual_prompt = ai_result.get("visual_prompt", raw_prompt)
-                style_category = ai_result.get("style_category", "REALISM")
-                title_text = ai_result.get("title_text", "")
-                title_pos = ai_result.get("title_position", "TOP_CENTER")
-                bottom_text = ai_result.get("bottom_text", "")
-                bottom_pos = ai_result.get("bottom_position", "BOTTOM_CENTER")
-                font_size_req = ai_result.get("font_size_req")
-                text_color = ai_result.get("text_color", "#FFFFFF")
-                stroke_color = ai_result.get("stroke_color", "#000000")
-                print("✅ Gemini 분석 완료")
-            except Exception as e:
-                print(f"⚠️ Gemini 분석 실패(기본값 사용): {e}")
-                visual_prompt = raw_prompt
-                style_category = "REALISM"
-                title_text, bottom_text = "", ""
-                title_pos, bottom_pos = "TOP_CENTER", "BOTTOM_CENTER"
-                font_size_req, text_color, stroke_color = None, "#FFFFFF", "#000000"
+                dec = json.loads(json_match.group())
+            except:
+                dec = {"prompt": raw_prompt, "mask_target": "background", "mask_mode": "BACKGROUND"}
+        else:
+            dec = {"prompt": raw_prompt, "mask_target": "background", "mask_mode": "BACKGROUND"}
 
-            # 5️⃣ Vertex AI Imagen 모델 호출 (이미지 수정 실행)
-            # 상단에 ImageGenerationModel이 임포트 되어 있다고 가정합니다.
-            model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-001")
-            negative_prompt = get_adaptive_negative_prompt(style_category)
-            print("🎨 Vertex AI Imagen 이미지 수정 요청 전송...")
+        v_prompt = dec.get("prompt", raw_prompt)
+        v_mask_target = dec.get("mask_target", "the environment")
+        v_mask_mode = str(dec.get("mask_mode", "BACKGROUND")).upper()
 
-            response = model.edit_image(
-                base_image=vertex_image,
-                prompt=visual_prompt,
-                negative_prompt=negative_prompt,
-                number_of_images=1,
-                language="en",
-            )
+        logger.info(f"🎯 선택된 모드: {v_mask_mode} | 타겟팅: {v_mask_target}")
 
-            if not response.images:
-                raise ValueError("❌ AI가 이미지를 반환하지 않았습니다. (Safety Filter 가능성)")
+        # 3️⃣ 🚀 [REST API] 시맨틱 정밀 통신
+        scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+        credentials, _ = google.auth.default(scopes=scopes)
+        auth_req = google.auth.transport.requests.Request()
+        credentials.refresh(auth_req)
+        access_token = credentials.token
 
-            # 결과 이미지를 PIL 객체로 변환
-            final_img = response.images[0]._pil_image
+        url = f"https://{LOCATION}-aiplatform.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/publishers/google/models/imagen-3.0-capability-001:predict"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json; charset=utf-8"
+        }
 
-            # 6️⃣ 이미지 후처리: 리사이즈 및 화질 개선
-            final_img = final_img.resize((w, h), Image.LANCZOS)
-            final_img = ImageEnhance.Sharpness(final_img).enhance(1.5)
-            final_img = ImageEnhance.Contrast(final_img).enhance(1.2)
-            final_img = ImageEnhance.Color(final_img).enhance(1.15)
+        payload = {
+            "instances": [
+                {
+                    "prompt": v_prompt,
+                    "referenceImages": [
+                        {
+                            "referenceType": "REFERENCE_TYPE_RAW",
+                            "referenceId": 1,
+                            "referenceImage": {"bytesBase64Encoded": img_b64}
+                        },
+                        {
+                            "referenceType": "REFERENCE_TYPE_MASK",
+                            "referenceId": 2,
+                            "maskImageConfig": {
+                                "maskMode": f"MASK_MODE_{v_mask_mode}",
+                                "maskPrompt": v_mask_target
+                            }
+                        }
+                    ]
+                }
+            ],
+            "parameters": {
+                "sampleCount": 1,
+                "editMode": "EDIT_MODE_INPAINT_INSERTION",
+                # [⭐ 삽입됨] REST API를 통한 이미지 수정 시에도 쓰레기 텍스트 생성이나 형태 붕괴를 막기 위해 강력한 부정 프롬프트를 명시합니다.
+                "negativePrompt": "bad text, garbage, gibberish, artifact, deformed, blurry, low quality, watermark, signature, ugly, distorted"
+            }
+        }
 
-            # 7️⃣ 텍스트 합성 (타이틀 + 하단 문구)
-            if title_text.strip():
-                final_img = draw_text_overlay(
-                    final_img, title_text, position=title_pos, is_title=True,
-                    requested_size=font_size_req, text_color=text_color, stroke_color=stroke_color
-                )
+        resp = requests.post(url, headers=headers, json=payload)
+        if resp.status_code != 200: raise RuntimeError(f"API Error: {resp.text}")
 
-            if bottom_text.strip():
-                final_img = draw_text_overlay(
-                    final_img, bottom_text, position=bottom_pos, is_title=False,
-                    requested_size=font_size_req, text_color=text_color, stroke_color=stroke_color
-                )
+        out_b64 = resp.json().get("predictions", [{}])[0].get("bytesBase64Encoded")
 
-            # 8️⃣ 결과 반환 처리 (포맷 변환 및 Base64 인코딩)
-            FORMAT_MAP = {"JPG": "JPEG", "JPEG": "JPEG", "PNG": "PNG"}
-            img_format = FORMAT_MAP.get(format_input, "PNG")
+        # 4️⃣ [후처리] (기존 로직 유지)
+        final_img = Image.open(io.BytesIO(base64.b64decode(out_b64)))
+        final_img = final_img.resize((orig_w, orig_h), Image.LANCZOS)
+        try:
+            tw, th = map(int, size_input.lower().split("x")) if "x" in size_input.lower() else (1480, 600)
+            final_img = final_img.resize((tw, th), Image.LANCZOS)
+        except:
+            pass
 
-            byte_arr = io.BytesIO()
-            if img_format == "JPEG" and final_img.mode != "RGB":
-                final_img = final_img.convert("RGB")
+        final_img = ImageEnhance.Sharpness(final_img).enhance(1.4)
 
-            final_img.save(byte_arr, format=img_format)
-            byte_arr.seek(0)
+        byte_arr = io.BytesIO()
+        final_img.save(byte_arr, format="PNG")
+        encoded = base64.b64encode(byte_arr.getvalue()).decode("utf-8")
 
-            encoded_img = base64.b64encode(byte_arr.read()).decode("utf-8")
-            print("🚀 이미지 수정 완료 및 전송 준비")
-
-            return jsonify({
-                "image_url": f"data:image/{img_format.lower()};base64,{encoded_img}",
-                "status": "success"
-            })
-
-        finally:
-            # 사용이 끝난 임시 파일 삭제 (서버 용량 관리)
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except:
-                    pass
+        logger.info("✅ 범용 정밀 수정 완료!")
+        return jsonify({"image_url": f"data:image/png;base64,{encoded}", "status": "success"})
 
     except Exception as e:
-        error_trace = traceback.format_exc()
-        print(f"\n🚨 [edit_image] 서버 에러 발생:\n{error_trace}")
-        return jsonify({
-            "error": f"서버 에러: {str(e)}",
-            "detail": error_trace
-        }), 500
-
+        logger.error(f"❌ 수정 실패: {str(e)}")
+        return jsonify({"error": "수정 실패", "detail": str(e)}), 500
 
 # ---------------------------
-# [엔드포인트] 메일 서버 (기존 소스 A 유지)
+# [엔드포인트] 메일 서버
 # ---------------------------
 POSTMARK_API_KEY = os.environ.get("POSTMARK_API_KEY")
 SENDER_EMAIL = "jslee@rootlabs.co.kr"  # 인증된 발신자 이메일
 RECIPIENT_EMAIL = "jslee@rootlabs.co.kr"
-
 
 @app.route("/send-mail", methods=["POST"])
 def send_mail():
@@ -878,8 +872,244 @@ def home():
     return "ROOTLABS Unified AI Server is Online"
 
 
+# ---------------------------
+# [엔드포인트] 회원가입
+# ---------------------------
+DB_HOST = os.environ.get("DB_HOST")
+DB_USER = os.environ.get("DB_USER")
+DB_PASSWORD = os.environ.get("DB_PASSWORD")
+DB_NAME = os.environ.get("DB_NAME")
+DB_PORT = int(os.environ.get("DB_PORT", 23155))
+
+# [3] DB 연결 함수 정의 (라우트보다 위에 있어야 함!)
+def get_db_connection():
+    return pymysql.connect(
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME,
+        port=DB_PORT,
+        cursorclass=pymysql.cursors.DictCursor,
+        ssl={"ssl": {}}
+    )
+
+@app.route('/signup', methods=['POST'])
+def signup():
+    data = request.get_json()
+    name = data.get('name')
+    email = data.get('email')
+    password = data.get('password')
+
+    if not name or not email or not password:
+        return jsonify({"result": "fail", "message": "모든 필드를 입력해주세요."}), 400
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            # 1. 이메일 중복 체크
+            check_sql = "SELECT id FROM users WHERE email = %s"
+            cursor.execute(check_sql, (email,))
+            if cursor.fetchone():
+                return jsonify({"result": "fail", "message": "이미 가입된 이메일입니다."}), 409
+
+            # 2. 비밀번호 암호화 (단방향 해시)
+            hashed_password = generate_password_hash(password)
+
+            # 3. DB에 회원 정보 INSERT
+            insert_sql = "INSERT INTO users (email, password_hash, name) VALUES (%s, %s, %s)"
+            cursor.execute(insert_sql, (email, hashed_password, name))
+
+        # 4. DB 변경사항 커밋(저장)
+        connection.commit()
+        return jsonify({"result": "success", "message": "회원가입 성공"}), 201
+
+    except Exception as e:
+        logger.error(f"Signup DB Error: {str(e)}")
+        # 에러 발생 시 DB 롤백
+        if connection:
+            connection.rollback()
+        return jsonify({"result": "error", "message": "회원가입 처리 중 서버 오류가 발생했습니다."}), 500
+
+    finally:
+        if connection:
+            connection.close()
+
+
+# ---------------------------
+# [엔드포인트] 로그인
+# ---------------------------
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    email = data.get('email')
+    password = data.get('password')
+
+    if not email or not password:
+        return jsonify({"result": "fail", "message": "이메일과 비밀번호를 입력해주세요."}), 400
+
+    connection = None
+    try:
+        # 1. DB 연결
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            # 2. 이메일로 사용자 정보 조회
+            sql = "SELECT id, email, password_hash, name FROM users WHERE email = %s"
+            cursor.execute(sql, (email,))
+            user = cursor.fetchone()
+
+        # 3. 사용자 검증 (이메일 존재 확인 및 비밀번호 해시 일치 여부 확인)
+        if user and check_password_hash(user['password_hash'], password):
+            # 로그인 성공 시
+            # 실제 서비스에서는 여기에 JWT 토큰 발급 코드가 들어갑니다.
+            return jsonify({
+                "result": "success",
+                "message": "로그인 성공",
+                "name": user['name'],
+                "token": "sample_jwt_token_here"
+            }), 200
+        else:
+            # 로그인 실패 시
+            return jsonify({"result": "fail", "message": "이메일 또는 비밀번호가 일치하지 않습니다."}), 401
+
+    except Exception as e:
+        logger.error(f"DB Error: {str(e)}")
+        return jsonify({"result": "error", "message": "서버 통신 오류가 발생했습니다."}), 500
+
+    finally:
+        # DB 연결 종료 (필수)
+        if connection:
+            connection.close()
+
+
+# ---------------------------
+# [엔드포인트] 비밀번호 찾기 (임시 비밀번호 발급)
+# ---------------------------
+@app.route('/find-password', methods=['POST'])
+def find_password():
+    data = request.get_json()
+    email = data.get('email')
+
+    if not email:
+        return jsonify({"result": "fail", "message": "이메일을 입력해주세요."}), 400
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            # 1. 가입된 이메일인지 확인
+            sql = "SELECT id, name FROM users WHERE email = %s"
+            cursor.execute(sql, (email,))
+            user = cursor.fetchone()
+
+            if not user:
+                return jsonify({"result": "fail", "message": "등록되지 않은 이메일입니다."}), 404
+
+            # 2. 임시 비밀번호 생성 (8자리 영문+숫자)
+            chars = string.ascii_letters + string.digits
+            temp_password = ''.join(random.choice(chars) for i in range(8))
+            hashed_temp_password = generate_password_hash(temp_password)
+
+            # 3. DB에 임시 비밀번호 업데이트
+            update_sql = "UPDATE users SET password_hash = %s WHERE email = %s"
+            cursor.execute(update_sql, (hashed_temp_password, email))
+            connection.commit()
+
+            # 4. 임시 비밀번호를 이메일로 발송 (Postmark API 활용)
+            # 기존에 /send-mail 라우트에서 사용하시는 POSTMARK_API_KEY와 발송 로직을 그대로 사용합니다.
+            POSTMARK_API_KEY = os.environ.get("POSTMARK_API_KEY")
+            SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "jslee@rootlabs.co.kr") # 인증된 발신자
+
+            resp = requests.post(
+                "https://api.postmarkapp.com/email",
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "X-Postmark-Server-Token": POSTMARK_API_KEY
+                },
+                json={
+                    "From": SENDER_EMAIL,
+                    "To": email,
+                    "Subject": "[루트랩스] 임시 비밀번호 발급 안내",
+                    "TextBody": f"""
+안녕하세요, {user['name']}님.
+요청하신 루트랩스 계정의 임시 비밀번호가 발급되었습니다.
+
+임시 비밀번호: {temp_password}
+
+로그인 후 반드시 비밀번호를 변경해 주시기 바랍니다.
+감사합니다.
+"""
+                }
+            )
+
+            # 메일 발송이 실패하더라도 일단 DB는 업데이트 되었으므로 에러처리는 필요에 따라 보강합니다.
+            if resp.status_code != 200:
+                logger.warning(f"메일 발송 실패: {resp.text}")
+
+        return jsonify({"result": "success", "message": "임시 비밀번호 발송 완료"}), 200
+
+    except Exception as e:
+        logger.error(f"Find Password Error: {str(e)}")
+        if connection:
+            connection.rollback()
+        return jsonify({"result": "error", "message": "서버 통신 오류가 발생했습니다."}), 500
+
+    finally:
+        if connection:
+            connection.close()
+
+
+# ---------------------------
+# [엔드포인트] 비밀번호 변경
+# ---------------------------
+@app.route('/change-password', methods=['POST'])
+def change_password():
+    data = request.get_json()
+    email = data.get('email')
+    current_password = data.get('current_password')
+    new_password = data.get('new_password')
+
+    if not email or not current_password or not new_password:
+        return jsonify({"result": "fail", "message": "모든 항목을 입력해주세요."}), 400
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            # 1. DB에서 사용자 정보 가져오기
+            sql = "SELECT id, password_hash FROM users WHERE email = %s"
+            cursor.execute(sql, (email,))
+            user = cursor.fetchone()
+
+            if not user:
+                return jsonify({"result": "fail", "message": "가입되지 않은 이메일입니다."}), 404
+
+            # 2. 현재 비밀번호 일치 여부 검증
+            if not check_password_hash(user['password_hash'], current_password):
+                return jsonify({"result": "fail", "message": "현재 비밀번호가 일치하지 않습니다."}), 401
+
+            # 3. 새 비밀번호 암호화 및 DB 업데이트
+            hashed_new_password = generate_password_hash(new_password)
+
+            update_sql = "UPDATE users SET password_hash = %s WHERE email = %s"
+            cursor.execute(update_sql, (hashed_new_password, email))
+            connection.commit()
+
+        return jsonify({"result": "success", "message": "비밀번호가 성공적으로 변경되었습니다."}), 200
+
+    except Exception as e:
+        logger.error(f"Change Password Error: {str(e)}")
+        if connection:
+            connection.rollback()
+        return jsonify({"result": "error", "message": "서버 통신 오류가 발생했습니다."}), 500
+
+    finally:
+        if connection:
+            connection.close()
+
+
 if __name__ == "__main__":
     threading.Thread(target=keep_alive, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-    
