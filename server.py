@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, Response, send_file
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
+from apscheduler.schedulers.background import BackgroundScheduler
 import pymysql
 import string
 import random
@@ -935,6 +936,34 @@ def signup():
         if connection:
             connection.close()
 
+# ---------------------------
+# Aiven DB Sleep 방지용 Ping Job
+# ---------------------------
+def db_ping_job():
+    """6시간마다 DB에 연결하여 SELECT 1을 실행하여 Sleep 상태를 방지합니다."""
+    connection = None
+    try:
+        logger.info("⏰ [DB Ping Job] Aiven DB Sleep 방지 핑 시작...")
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            result = cursor.fetchone()
+            logger.info(f"✅ [DB Ping Job] Ping 성공! Result: {result}")
+    except Exception as e:
+        logger.error(f"❌ [DB Ping Job] Ping 실패: {str(e)}")
+    finally:
+        if connection:
+            connection.close()
+
+# ---------------------------
+# 스케줄러 초기화 및 시작
+# ---------------------------
+# Flask 앱 시작 시 스케줄러를 백그라운드로 실행하도록 설정합니다.
+scheduler = BackgroundScheduler(daemon=True)
+# 6시간(360분) 간격으로 db_ping_job 실행
+scheduler.add_job(db_ping_job, 'interval', hours=6, id='aiven_db_keep_alive')
+scheduler.start()
+logger.info("⏱️ 백그라운드 스케줄러(APScheduler) 가동 완료: 6시간 주기로 DB Ping 실행")
 
 # ---------------------------
 # [엔드포인트] 로그인
