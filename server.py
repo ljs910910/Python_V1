@@ -1316,11 +1316,11 @@ def get_leave_queue():
 # ---------------------------
 @app.route('/api/admin/process-leave', methods=['POST'])
 def process_leave():
-    """휴가 신청을 승인/반려 처리하고, 승인 시 사용자의 연차를 차감합니다."""
     data = request.get_json()
     admin_email = data.get('admin_email')
     request_id = data.get('request_id')
-    status = data.get('status')  # '승인' 또는 '반려'
+    status = data.get('status')
+    reject_reason = data.get('reject_reason', '')  # ⭐ 반려 사유 받기 추가
 
     if status not in ['승인', '반려']:
         return jsonify({"result": "fail", "message": "잘못된 상태 값"}), 400
@@ -1329,28 +1329,26 @@ def process_leave():
     try:
         connection = get_db_connection()
         with connection.cursor() as cursor:
-            # 1. 관리자 권한 확인
             cursor.execute("SELECT role FROM users WHERE email = %s", (admin_email,))
             admin = cursor.fetchone()
             if not admin or admin['role'] != 'admin':
                 return jsonify({"result": "fail", "message": "권한 없음"}), 403
 
-            # 2. 신청 내역 조회 및 상태 변경
             cursor.execute("SELECT user_id, deduction_days, status FROM leave_requests WHERE id = %s", (request_id,))
             req = cursor.fetchone()
 
             if not req or req['status'] != '대기':
                 return jsonify({"result": "fail", "message": "유효하지 않거나 이미 처리된 요청입니다."}), 400
 
-            cursor.execute("UPDATE leave_requests SET status = %s WHERE id = %s", (status, request_id))
-
-            # 3. 승인일 경우 연차 차감 진행
-            if status == '승인' and req['deduction_days'] > 0:
-                cursor.execute("""
-                    UPDATE users 
-                    SET used_leave = used_leave + %s 
-                    WHERE id = %s
-                """, (req['deduction_days'], req['user_id']))
+            # ⭐ 승인/반려에 따른 로직 분리
+            if status == '반려':
+                cursor.execute("UPDATE leave_requests SET status = %s, reject_reason = %s WHERE id = %s",
+                               (status, reject_reason, request_id))
+            elif status == '승인':
+                cursor.execute("UPDATE leave_requests SET status = %s WHERE id = %s", (status, request_id))
+                if req['deduction_days'] > 0:
+                    cursor.execute("UPDATE users SET used_leave = used_leave + %s WHERE id = %s",
+                                   (req['deduction_days'], req['user_id']))
 
             connection.commit()
 
@@ -1424,7 +1422,6 @@ def get_staff_balances():
     finally:
         if connection: connection.close()
 
-
 # ---------------------------
 # [엔드포인트] (공통) 승인된 캘린더 일정 조회
 # ---------------------------
@@ -1434,9 +1431,9 @@ def get_leave_calendar():
     try:
         connection = get_db_connection()
         with connection.cursor() as cursor:
-            # 상태가 '승인'인 내역만 가져옵니다.
+            # ⭐ 수정: r.id as request_id 추가 (프론트에서 취소할 때 식별키로 사용)
             sql = """
-                SELECT u.name, r.leave_type, r.start_date, r.end_date
+                SELECT r.id as request_id, u.name, r.leave_type, r.start_date, r.end_date
                 FROM leave_requests r
                 JOIN users u ON r.user_id = u.id
                 WHERE r.status = '승인'
@@ -1444,15 +1441,12 @@ def get_leave_calendar():
             cursor.execute(sql)
             events = cursor.fetchall()
 
-            # FullCalendar 규격에 맞게 데이터 가공
             calendar_events = []
             for ev in events:
-                # FullCalendar는 종료일(end)이 자정(00:00) 기준이라 하루를 더해줘야 캘린더에 꽉 차게 나옵니다.
                 end_date_obj = ev['end_date'] + timedelta(days=1)
-
                 color = "#198754" if ev['leave_type'] == '연차' else "#fd7e14" if '반차' in ev['leave_type'] else "#6c757d"
-
                 calendar_events.append({
+                    "id": str(ev['request_id']), # ⭐ 식별 키 추가
                     "title": f"{ev['name']} ({ev['leave_type']})",
                     "start": ev['start_date'].strftime('%Y-%m-%d'),
                     "end": end_date_obj.strftime('%Y-%m-%d'),
@@ -1466,7 +1460,85 @@ def get_leave_calendar():
         return jsonify({"result": "error", "message": "서버 오류"}), 500
     finally:
         if connection: connection.close()
-        
+
+# ---------------------------
+# [엔드포인트] (관리자) 승인된 휴가 취소 및 연차 복구
+# ---------------------------
+@app.route('/api/admin/cancel-leave', methods=['POST'])
+def cancel_leave():
+    data = request.get_json()
+    admin_email = data.get('admin_email')
+    request_id = data.get('request_id')
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT role FROM users WHERE email = %s", (admin_email,))
+            admin = cursor.fetchone()
+            if not admin or admin['role'] != 'admin':
+                return jsonify({"result": "fail", "message": "권한 없음"}), 403
+
+            # 승인된 내역인지 확인
+            cursor.execute("SELECT user_id, deduction_days, status FROM leave_requests WHERE id = %s", (request_id,))
+            req = cursor.fetchone()
+
+            if not req or req['status'] != '승인':
+                return jsonify({"result": "fail", "message": "취소할 수 없는 상태입니다."}), 400
+
+            # 상태를 '취소'로 변경
+            cursor.execute("UPDATE leave_requests SET status = '취소' WHERE id = %s", (request_id,))
+
+            # 연차 일수 복구 (환불)
+            if req['deduction_days'] > 0:
+                cursor.execute("UPDATE users SET used_leave = used_leave - %s WHERE id = %s",
+                               (req['deduction_days'], req['user_id']))
+
+            connection.commit()
+
+        return jsonify({"result": "success", "message": "휴가가 취소되고 연차가 복구되었습니다."}), 200
+    except Exception as e:
+        logger.error(f"휴가 취소 오류: {str(e)}")
+        if connection: connection.rollback()
+        return jsonify({"result": "error", "message": "서버 오류"}), 500
+    finally:
+        if connection: connection.close()
+
+# ---------------------------
+# [엔드포인트] (직원) 내 휴가 신청 내역 조회 (반려 사유 확인용)
+# ---------------------------
+@app.route('/api/leave/my-history', methods=['POST'])
+def get_my_leave_history():
+    email = request.json.get('email')
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+            user = cursor.fetchone()
+            if not user: return jsonify({"result": "fail"}), 404
+
+            sql = """
+                SELECT id, leave_type, start_date, end_date, deduction_days, status, reject_reason, created_at 
+                FROM leave_requests 
+                WHERE user_id = %s 
+                ORDER BY created_at DESC
+            """
+            cursor.execute(sql, (user['id'],))
+            history = cursor.fetchall()
+
+            for h in history:
+                h['start_date'] = h['start_date'].strftime('%Y-%m-%d')
+                h['end_date'] = h['end_date'].strftime('%Y-%m-%d')
+                h['created_at'] = h['created_at'].strftime('%Y-%m-%d %H:%M')
+
+        return jsonify({"result": "success", "history": history}), 200
+    except Exception as e:
+        logger.error(f"내역 조회 오류: {str(e)}")
+        return jsonify({"result": "error"}), 500
+    finally:
+        if connection: connection.close()
+
 if __name__ == "__main__":
     threading.Thread(target=keep_alive, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
