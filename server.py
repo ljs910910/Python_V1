@@ -1136,6 +1136,257 @@ def change_password():
         if connection:
             connection.close()
 
+# ---------------------------
+# [엔드포인트] (공통) 내 연차 정보 조회
+# ---------------------------
+@app.route('/api/leave/my-info', methods=['POST'])
+def get_my_leave_info():
+    """로그인한 사용자의 총 연차와 사용 연차를 반환합니다."""
+    # 현재 토큰 인증이 없으므로, 프론트에서 이메일을 보내도록 처리 (보안상 임시)
+    data = request.get_json()
+    email = data.get('email')
+
+    if not email:
+        return jsonify({"result": "fail", "message": "사용자 정보가 필요합니다."}), 400
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            sql = "SELECT total_leave, used_leave FROM users WHERE email = %s"
+            cursor.execute(sql, (email,))
+            user = cursor.fetchone()
+
+            if not user:
+                return jsonify({"result": "fail", "message": "사용자를 찾을 수 없습니다."}), 404
+
+            return jsonify({
+                "result": "success",
+                "total_leave": user['total_leave'],
+                "used_leave": user['used_leave']
+            }), 200
+    except Exception as e:
+        logger.error(f"연차 조회 오류: {str(e)}")
+        return jsonify({"result": "error", "message": "서버 통신 오류"}), 500
+    finally:
+        if connection: connection.close()
+
+# ---------------------------
+# [엔드포인트] (직원) 휴가 신청
+# ---------------------------
+@app.route('/api/leave/apply', methods=['POST'])
+def apply_leave():
+    """직원이 휴가를 신청하여 승인 대기 상태로 DB에 저장합니다."""
+    data = request.get_json()
+    email = data.get('email')
+    leave_type = data.get('leave_type')
+    start_date = data.get('start_date')
+    end_date = data.get('end_date')
+    reason = data.get('reason')
+
+    if not all([email, leave_type, start_date, end_date, reason]):
+        return jsonify({"result": "fail", "message": "모든 항목을 입력해주세요."}), 400
+
+    # 연차 차감 일수 계산 로직 (간단화)
+    deduction = 0.0
+    if leave_type == '연차':
+        deduction = 1.0  # 날짜 계산은 추후 고도화 필요
+    elif leave_type in ['오전반차', '오후반차']:
+        deduction = 0.5
+    # 공가는 차감 안 함
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            # 1. user_id 조회
+            cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+            user = cursor.fetchone()
+            if not user: return jsonify({"result": "fail", "message": "사용자 없음"}), 404
+
+            # 2. 신청 내역 저장
+            insert_sql = """
+                INSERT INTO leave_requests (user_id, leave_type, start_date, end_date, deduction_days, reason, status)
+                VALUES (%s, %s, %s, %s, %s, %s, '대기')
+            """
+            cursor.execute(insert_sql, (user['id'], leave_type, start_date, end_date, deduction, reason))
+            connection.commit()
+
+        return jsonify({"result": "success", "message": "휴가 신청이 접수되었습니다."}), 201
+    except Exception as e:
+        logger.error(f"휴가 신청 오류: {str(e)}")
+        if connection: connection.rollback()
+        return jsonify({"result": "error", "message": "서버 오류"}), 500
+    finally:
+        if connection: connection.close()
+
+
+# ---------------------------
+# [엔드포인트] (관리자) 직원 연차 일수 부여
+# ---------------------------
+@app.route('/api/admin/grant-leave', methods=['POST'])
+def grant_leave():
+    """관리자가 특정 직원 이메일로 연차 일수를 부여(누적)하고 권한을 staff로 올립니다."""
+    data = request.get_json()
+    admin_email = data.get('admin_email')  # 호출자가 관리자인지 확인용
+    target_email = data.get('email')
+    days_to_add = float(data.get('days', 0))
+
+    if not admin_email or not target_email or days_to_add <= 0:
+        return jsonify({"result": "fail", "message": "정확한 정보를 입력하세요."}), 400
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            # 1. 관리자 권한 확인
+            cursor.execute("SELECT role FROM users WHERE email = %s", (admin_email,))
+            admin = cursor.fetchone()
+            if not admin or admin['role'] != 'admin':
+                return jsonify({"result": "fail", "message": "관리자 권한이 없습니다."}), 403
+
+            # 2. 대상 직원 연차 업데이트 및 권한 부여
+            update_sql = """
+                UPDATE users 
+                SET total_leave = total_leave + %s, role = 'staff' 
+                WHERE email = %s
+            """
+            affected = cursor.execute(update_sql, (days_to_add, target_email))
+
+            if affected == 0:
+                return jsonify({"result": "fail", "message": "가입되지 않은 이메일입니다."}), 404
+
+            connection.commit()
+
+        return jsonify({"result": "success", "message": f"{target_email}에 {days_to_add}일 부여 완료."}), 200
+    except Exception as e:
+        logger.error(f"연차 부여 오류: {str(e)}")
+        if connection: connection.rollback()
+        return jsonify({"result": "error", "message": "서버 오류"}), 500
+    finally:
+        if connection: connection.close()
+
+
+# ---------------------------
+# [엔드포인트] (관리자) 승인 대기열 조회
+# ---------------------------
+@app.route('/api/admin/leave-queue', methods=['POST'])
+def get_leave_queue():
+    """관리자 화면에 보여줄 대기 상태의 휴가 신청 목록을 반환합니다."""
+    data = request.get_json()
+    admin_email = data.get('admin_email')
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            # 관리자 확인
+            cursor.execute("SELECT role FROM users WHERE email = %s", (admin_email,))
+            admin = cursor.fetchone()
+            if not admin or admin['role'] != 'admin':
+                return jsonify({"result": "fail", "message": "권한 없음"}), 403
+
+            # JOIN을 통해 유저 이름/이메일과 함께 대기열 조회
+            sql = """
+                SELECT r.id, u.name as user_name, u.email as user_email, 
+                       r.leave_type, r.start_date, r.end_date, r.reason
+                FROM leave_requests r
+                JOIN users u ON r.user_id = u.id
+                WHERE r.status = '대기'
+                ORDER BY r.created_at ASC
+            """
+            cursor.execute(sql)
+            queue = cursor.fetchall()
+
+            # 날짜 형식을 문자열로 변환 (JSON 직렬화 에러 방지)
+            for q in queue:
+                q['start_date'] = q['start_date'].strftime('%Y-%m-%d')
+                q['end_date'] = q['end_date'].strftime('%Y-%m-%d')
+
+        return jsonify({"result": "success", "queue": queue}), 200
+    except Exception as e:
+        logger.error(f"대기열 조회 오류: {str(e)}")
+        return jsonify({"result": "error", "message": "서버 오류"}), 500
+    finally:
+        if connection: connection.close()
+
+
+# ---------------------------
+# [엔드포인트] (관리자) 휴가 승인/반려 처리
+# ---------------------------
+@app.route('/api/admin/process-leave', methods=['POST'])
+def process_leave():
+    """휴가 신청을 승인/반려 처리하고, 승인 시 사용자의 연차를 차감합니다."""
+    data = request.get_json()
+    admin_email = data.get('admin_email')
+    request_id = data.get('request_id')
+    status = data.get('status')  # '승인' 또는 '반려'
+
+    if status not in ['승인', '반려']:
+        return jsonify({"result": "fail", "message": "잘못된 상태 값"}), 400
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            # 1. 관리자 권한 확인
+            cursor.execute("SELECT role FROM users WHERE email = %s", (admin_email,))
+            admin = cursor.fetchone()
+            if not admin or admin['role'] != 'admin':
+                return jsonify({"result": "fail", "message": "권한 없음"}), 403
+
+            # 2. 신청 내역 조회 및 상태 변경
+            cursor.execute("SELECT user_id, deduction_days, status FROM leave_requests WHERE id = %s", (request_id,))
+            req = cursor.fetchone()
+
+            if not req or req['status'] != '대기':
+                return jsonify({"result": "fail", "message": "유효하지 않거나 이미 처리된 요청입니다."}), 400
+
+            cursor.execute("UPDATE leave_requests SET status = %s WHERE id = %s", (status, request_id))
+
+            # 3. 승인일 경우 연차 차감 진행
+            if status == '승인' and req['deduction_days'] > 0:
+                cursor.execute("""
+                    UPDATE users 
+                    SET used_leave = used_leave + %s 
+                    WHERE id = %s
+                """, (req['deduction_days'], req['user_id']))
+
+            connection.commit()
+
+        return jsonify({"result": "success", "message": f"{status} 처리 완료"}), 200
+    except Exception as e:
+        logger.error(f"휴가 처리 오류: {str(e)}")
+        if connection: connection.rollback()
+        return jsonify({"result": "error", "message": "서버 오류"}), 500
+    finally:
+        if connection: connection.close()
+
+# ---------------------------
+# [엔드포인트] (관리자) 연차 부여를 위한 직원 목록 조회
+# ---------------------------
+@app.route('/api/admin/staff-list', methods=['GET'])
+def get_staff_list():
+    """@rootlabs.co.kr 도메인을 가진 직원/일반 사용자 목록을 반환합니다."""
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            # 관리자를 제외하고, 루트랩스 메일을 쓰는 user나 staff만 불러옵니다.
+            sql = """
+                SELECT email, name, role 
+                FROM users 
+                WHERE role != 'admin' AND email LIKE '%@rootlabs.co.kr'
+            """
+            cursor.execute(sql)
+            staff_list = cursor.fetchall()
+
+        return jsonify({"result": "success", "staff_list": staff_list}), 200
+    except Exception as e:
+        logger.error(f"직원 목록 조회 오류: {str(e)}")
+        return jsonify({"result": "error", "message": "서버 오류"}), 500
+    finally:
+        if connection: connection.close()
 
 if __name__ == "__main__":
     threading.Thread(target=keep_alive, daemon=True).start()
