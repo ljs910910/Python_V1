@@ -8,23 +8,20 @@ import random
 import google.generativeai as genai
 import vertexai
 from vertexai.preview.vision_models import ImageGenerationModel
-from vertexai.preview.vision_models import Image as VertexImage  # ⭐ edit_image 전용
 import os
 import threading
 import time
+from datetime import datetime, timedelta
 import requests
 import logging
 import openai
 import io
 import base64
 import json
-import traceback
-import re
 import warnings
 from PIL import Image, ImageEnhance, ImageFont, ImageDraw, ImageColor
-from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
-import tempfile
+
 
 # ---------------------------
 # [1] 환경 변수 로드 및 설정
@@ -1176,7 +1173,6 @@ def get_my_leave_info():
 # ---------------------------
 @app.route('/api/leave/apply', methods=['POST'])
 def apply_leave():
-    """직원이 휴가를 신청하여 승인 대기 상태로 DB에 저장합니다."""
     data = request.get_json()
     email = data.get('email')
     leave_type = data.get('leave_type')
@@ -1187,24 +1183,28 @@ def apply_leave():
     if not all([email, leave_type, start_date, end_date, reason]):
         return jsonify({"result": "fail", "message": "모든 항목을 입력해주세요."}), 400
 
-    # 연차 차감 일수 계산 로직 (간단화)
+    # ⭐ 연차 차감 일수 자동 계산 로직 (버그 픽스)
     deduction = 0.0
     if leave_type == '연차':
-        deduction = 1.0  # 날짜 계산은 추후 고도화 필요
+        try:
+            s_date = datetime.strptime(start_date, '%Y-%m-%d')
+            e_date = datetime.strptime(end_date, '%Y-%m-%d')
+            deduction = float((e_date - s_date).days + 1)
+        except Exception as e:
+            logger.error(f"날짜 파싱 오류: {e}")
+            deduction = 1.0
     elif leave_type in ['오전반차', '오후반차']:
         deduction = 0.5
-    # 공가는 차감 안 함
+    # 공가는 차감 안 함 (0.0)
 
     connection = None
     try:
         connection = get_db_connection()
         with connection.cursor() as cursor:
-            # 1. user_id 조회
             cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
             user = cursor.fetchone()
             if not user: return jsonify({"result": "fail", "message": "사용자 없음"}), 404
 
-            # 2. 신청 내역 저장
             insert_sql = """
                 INSERT INTO leave_requests (user_id, leave_type, start_date, end_date, deduction_days, reason, status)
                 VALUES (%s, %s, %s, %s, %s, %s, '대기')
@@ -1388,6 +1388,85 @@ def get_staff_list():
     finally:
         if connection: connection.close()
 
+
+# ---------------------------
+# [엔드포인트] (관리자) 직원별 연차 현황 조회
+# ---------------------------
+@app.route('/api/admin/staff-balances', methods=['POST'])
+def get_staff_balances():
+    data = request.get_json()
+    admin_email = data.get('admin_email')
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            # 관리자 확인
+            cursor.execute("SELECT role FROM users WHERE email = %s", (admin_email,))
+            admin = cursor.fetchone()
+            if not admin or admin['role'] != 'admin':
+                return jsonify({"result": "fail", "message": "권한 없음"}), 403
+
+            # 직원들 현황 조회
+            sql = """
+                SELECT name, email, total_leave, used_leave, (total_leave - used_leave) as remain_leave
+                FROM users 
+                WHERE role = 'staff'
+                ORDER BY name ASC
+            """
+            cursor.execute(sql)
+            balances = cursor.fetchall()
+
+        return jsonify({"result": "success", "balances": balances}), 200
+    except Exception as e:
+        logger.error(f"직원 현황 조회 오류: {str(e)}")
+        return jsonify({"result": "error", "message": "서버 오류"}), 500
+    finally:
+        if connection: connection.close()
+
+
+# ---------------------------
+# [엔드포인트] (공통) 승인된 캘린더 일정 조회
+# ---------------------------
+@app.route('/api/leave/calendar', methods=['GET'])
+def get_leave_calendar():
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            # 상태가 '승인'인 내역만 가져옵니다.
+            sql = """
+                SELECT u.name, r.leave_type, r.start_date, r.end_date
+                FROM leave_requests r
+                JOIN users u ON r.user_id = u.id
+                WHERE r.status = '승인'
+            """
+            cursor.execute(sql)
+            events = cursor.fetchall()
+
+            # FullCalendar 규격에 맞게 데이터 가공
+            calendar_events = []
+            for ev in events:
+                # FullCalendar는 종료일(end)이 자정(00:00) 기준이라 하루를 더해줘야 캘린더에 꽉 차게 나옵니다.
+                end_date_obj = ev['end_date'] + timedelta(days=1)
+
+                color = "#198754" if ev['leave_type'] == '연차' else "#fd7e14" if '반차' in ev['leave_type'] else "#6c757d"
+
+                calendar_events.append({
+                    "title": f"{ev['name']} ({ev['leave_type']})",
+                    "start": ev['start_date'].strftime('%Y-%m-%d'),
+                    "end": end_date_obj.strftime('%Y-%m-%d'),
+                    "color": color,
+                    "allDay": True
+                })
+
+        return jsonify({"result": "success", "events": calendar_events}), 200
+    except Exception as e:
+        logger.error(f"캘린더 조회 오류: {str(e)}")
+        return jsonify({"result": "error", "message": "서버 오류"}), 500
+    finally:
+        if connection: connection.close()
+        
 if __name__ == "__main__":
     threading.Thread(target=keep_alive, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
