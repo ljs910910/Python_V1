@@ -1168,8 +1168,9 @@ def get_my_leave_info():
     finally:
         if connection: connection.close()
 
+
 # ---------------------------
-# [엔드포인트] (직원) 휴가 신청
+# [엔드포인트] (직원) 휴가 신청 (메일 알림 추가됨)
 # ---------------------------
 @app.route('/api/leave/apply', methods=['POST'])
 def apply_leave():
@@ -1183,7 +1184,7 @@ def apply_leave():
     if not all([email, leave_type, start_date, end_date, reason]):
         return jsonify({"result": "fail", "message": "모든 항목을 입력해주세요."}), 400
 
-    # ⭐ 연차 차감 일수 자동 계산 로직 (버그 픽스)
+    # 연차 차감 일수 자동 계산
     deduction = 0.0
     if leave_type == '연차':
         try:
@@ -1195,22 +1196,59 @@ def apply_leave():
             deduction = 1.0
     elif leave_type in ['오전반차', '오후반차']:
         deduction = 0.5
-    # 공가는 차감 안 함 (0.0)
 
     connection = None
     try:
         connection = get_db_connection()
         with connection.cursor() as cursor:
-            cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+            # 1. 신청자 정보(ID, 이름) 조회
+            cursor.execute("SELECT id, name FROM users WHERE email = %s", (email,))
             user = cursor.fetchone()
             if not user: return jsonify({"result": "fail", "message": "사용자 없음"}), 404
 
+            # 2. 신청 내역 저장
             insert_sql = """
                 INSERT INTO leave_requests (user_id, leave_type, start_date, end_date, deduction_days, reason, status)
                 VALUES (%s, %s, %s, %s, %s, %s, '대기')
             """
             cursor.execute(insert_sql, (user['id'], leave_type, start_date, end_date, deduction, reason))
             connection.commit()
+
+            # 3. ⭐ 관리자에게 알림 메일 발송 (Postmark API 활용)
+            try:
+                POSTMARK_API_KEY = os.environ.get("POSTMARK_API_KEY")
+                ADMIN_EMAIL = "jslee@rootlabs.co.kr"
+
+                email_body = f"""
+신규 휴가 신청 내역이 접수되었습니다. 관리자 페이지에서 승인 여부를 확인해 주세요.
+
+[신청 내역 상세]
+- 신청자: {user['name']} ({email})
+- 휴가 종류: {leave_type}
+- 신청 기간: {start_date} ~ {end_date}
+- 신청 일수: {deduction}일
+- 사유: {reason}
+
+항상 협조해 주셔서 감사합니다.
+"""
+                requests.post(
+                    "https://api.postmarkapp.com/email",
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                        "X-Postmark-Server-Token": POSTMARK_API_KEY
+                    },
+                    json={
+                        "From": SENDER_EMAIL,
+                        "To": ADMIN_EMAIL,
+                        "Subject": f"[루트랩스 근태관리] 휴가 신청 알림 ({user['name']})",
+                        "TextBody": email_body
+                    },
+                    timeout=5
+                )
+                logger.info(f"📧 관리자 알림 메일 발송 완료: {email}")
+            except Exception as mail_err:
+                logger.error(f"❌ 메일 발송 오류 (신청은 완료됨): {str(mail_err)}")
 
         return jsonify({"result": "success", "message": "휴가 신청이 접수되었습니다."}), 201
     except Exception as e:
@@ -1219,7 +1257,6 @@ def apply_leave():
         return jsonify({"result": "error", "message": "서버 오류"}), 500
     finally:
         if connection: connection.close()
-
 
 # ---------------------------
 # [엔드포인트] (관리자) 직원 연차 일수 부여
@@ -1386,7 +1423,6 @@ def get_staff_list():
     finally:
         if connection: connection.close()
 
-
 # ---------------------------
 # [엔드포인트] (관리자) 직원별 연차 현황 조회
 # ---------------------------
@@ -1409,7 +1445,7 @@ def get_staff_balances():
             sql = """
                 SELECT name, email, total_leave, used_leave, (total_leave - used_leave) as remain_leave
                 FROM users 
-                WHERE role = 'staff'
+                WHERE role = 'staff' AND email LIKE '%@rootlabs.co.kr'
                 ORDER BY name ASC
             """
             cursor.execute(sql)
