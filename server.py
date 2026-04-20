@@ -982,19 +982,19 @@ def login():
         # 1. DB 연결
         connection = get_db_connection()
         with connection.cursor() as cursor:
-            # 2. 이메일로 사용자 정보 조회
-            sql = "SELECT id, email, password_hash, name FROM users WHERE email = %s"
+            # ⭐ 수정: 이메일로 사용자 정보 조회 시 'role' 컬럼 추가
+            sql = "SELECT id, email, password_hash, name, role FROM users WHERE email = %s"
             cursor.execute(sql, (email,))
             user = cursor.fetchone()
 
         # 3. 사용자 검증 (이메일 존재 확인 및 비밀번호 해시 일치 여부 확인)
         if user and check_password_hash(user['password_hash'], password):
             # 로그인 성공 시
-            # 실제 서비스에서는 여기에 JWT 토큰 발급 코드가 들어갑니다.
             return jsonify({
                 "result": "success",
                 "message": "로그인 성공",
                 "name": user['name'],
+                "role": user['role'], # ⭐ 수정: DB에서 가져온 role 값을 프론트엔드 응답에 포함
                 "token": "sample_jwt_token_here"
             }), 200
         else:
@@ -1009,7 +1009,6 @@ def login():
         # DB 연결 종료 (필수)
         if connection:
             connection.close()
-
 
 # ---------------------------
 # [엔드포인트] 비밀번호 찾기 (임시 비밀번호 발급)
