@@ -11,3 +11,4 @@ openai
 # [권장] 배포 서버(Render) 구동용
 gunicorn
 pymysql
+APScheduler
