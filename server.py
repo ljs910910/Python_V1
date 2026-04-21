@@ -1588,8 +1588,9 @@ def get_my_leave_history():
     finally:
         if connection: connection.close()
 
+
 # =======================================================
-# 사용자 일일 사용 횟수 제한 체크
+# 사용자 일일 사용 횟수 제한 체크 (타입 방어 로직 추가)
 # =======================================================
 def check_usage_limit(email):
     """사용자 일일 10회 제한 체크 및 자정 초기화"""
@@ -1611,21 +1612,21 @@ def check_usage_limit(email):
             if user['role'] == 'admin':
                 return True, "admin", 200
 
-            # 3. Lazy Reset: 마지막 사용일이 오늘이 아니면 카운트 0 초기화
+            # 3. Lazy Reset: 날짜를 무조건 문자열(YYYY-MM-DD)로 통일하여 비교 (매번 리셋되는 버그 방지)
             from datetime import datetime
-            today = datetime.now().date()
-            last_date = user['last_use_date']
+            today_str = str(datetime.now().date())
+            last_date_str = str(user['last_use_date']) if user['last_use_date'] else ""
             usage_count = user['usage_count'] or 0
 
-            if last_date != today:
+            if last_date_str != today_str:
                 usage_count = 0
                 cursor.execute("UPDATE users SET usage_count = 0, last_use_date = %s WHERE id = %s",
-                               (today, user['id']))
+                               (today_str, user['id']))
                 connection.commit()
 
             # 4. 사용 횟수 제한 (10회)
-            if usage_count >= 10:
-                return False, "일일 AI 이미지 기능 사용 한도(10회)를 모두 소진했습니다. 내일 다시 이용해주세요.", 403
+            if usage_count >= 3:
+                return False, "일일 AI 기능 사용 한도(3회)를 모두 소진했습니다. 내일 다시 이용해주세요.", 403
 
             return True, user['id'], 200
     except Exception as e:
@@ -1636,13 +1637,16 @@ def check_usage_limit(email):
 
 def increment_usage(user_id):
     """이미지 생성 성공 시 사용 횟수 1 증가"""
-    if not isinstance(user_id, int): return  # admin이거나 에러면 패스
+    # 자료형 검사(int) 대신 값 비교로 변경하여 id가 문자열로 넘어오는 경우 방어
+    if str(user_id) == "admin": 
+        return  
 
     connection = None
     try:
         connection = get_db_connection()
         with connection.cursor() as cursor:
-            cursor.execute("UPDATE users SET usage_count = usage_count + 1 WHERE id = %s", (user_id,))
+            # 기존 usage_count가 완전히 비어있을(NULL) 경우에도 에러가 나지 않도록 IFNULL 추가
+            cursor.execute("UPDATE users SET usage_count = IFNULL(usage_count, 0) + 1 WHERE id = %s", (user_id,))
             connection.commit()
     except Exception as e:
         logger.error(f"Usage Increment Error: {e}")
