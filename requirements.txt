@@ -12,3 +12,4 @@ openai
 gunicorn
 pymysql
 APScheduler
+holidays
