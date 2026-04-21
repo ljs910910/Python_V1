@@ -21,7 +21,7 @@ import json
 import warnings
 from PIL import Image, ImageEnhance, ImageFont, ImageDraw, ImageColor
 from dotenv import load_dotenv
-
+import holidays
 
 # ---------------------------
 # [1] 환경 변수 로드 및 설정
@@ -1467,27 +1467,40 @@ def get_leave_calendar():
     try:
         connection = get_db_connection()
         with connection.cursor() as cursor:
-            # ⭐ 수정: r.id as request_id 추가 (프론트에서 취소할 때 식별키로 사용)
-            sql = """
-                SELECT r.id as request_id, u.name, r.leave_type, r.start_date, r.end_date
-                FROM leave_requests r
-                JOIN users u ON r.user_id = u.id
-                WHERE r.status = '승인'
-            """
-            cursor.execute(sql)
+            # 1. 직원들의 휴가 승인 내역
+            cursor.execute(
+                "SELECT r.id as request_id, u.name, r.leave_type, r.start_date, r.end_date FROM leave_requests r JOIN users u ON r.user_id = u.id WHERE r.status = '승인'")
             events = cursor.fetchall()
 
             calendar_events = []
+
+            # 휴가 이벤트를 캘린더 리스트에 추가
             for ev in events:
-                end_date_obj = ev['end_date'] + timedelta(days=1)
-                color = "#198754" if ev['leave_type'] == '연차' else "#fd7e14" if '반차' in ev['leave_type'] else "#6c757d"
                 calendar_events.append({
-                    "id": str(ev['request_id']), # ⭐ 식별 키 추가
+                    "id": str(ev['request_id']),
                     "title": f"{ev['name']} ({ev['leave_type']})",
                     "start": ev['start_date'].strftime('%Y-%m-%d'),
-                    "end": end_date_obj.strftime('%Y-%m-%d'),
-                    "color": color,
+                    "end": (ev['end_date'] + timedelta(days=1)).strftime('%Y-%m-%d'),
+                    "color": "#198754" if ev['leave_type'] == '연차' else "#fd7e14" if '반차' in ev[
+                        'leave_type'] else "#6c757d",
                     "allDay": True
+                })
+
+            # 2. [추가됨] 대한민국의 공휴일 데이터 생성 및 합치기
+            # 사용자 편의를 위해 작년, 올해, 내년(총 3년치) 공휴일을 가져옵니다.
+            current_year = datetime.now().year
+            kr_holidays = holidays.KR(years=[current_year - 1, current_year, current_year + 1])
+
+            for date, name in kr_holidays.items():
+                calendar_events.append({
+                    "id": f"holiday_{date}",
+                    "title": name,
+                    "start": date.strftime('%Y-%m-%d'),
+                    "color": "#dc3545",  # 진한 빨간색 지정
+                    "allDay": True,
+                    "className": "holiday-event"  # 프론트엔드 CSS 추가 제어용
+                    # 만약 작은 바(bar) 형태가 아니라, 달력 칸 배경 전체를 빨갛게 칠하고 싶으시면
+                    # 위 속성에 "display": "background" 를 추가하시면 됩니다.
                 })
 
         return jsonify({"result": "success", "events": calendar_events}), 200
@@ -1572,6 +1585,68 @@ def get_my_leave_history():
     except Exception as e:
         logger.error(f"내역 조회 오류: {str(e)}")
         return jsonify({"result": "error"}), 500
+    finally:
+        if connection: connection.close()
+
+
+# =======================================================
+# 사용자 일일 사용 횟수 제한 체크
+# =======================================================
+def check_usage_limit(email):
+    """사용자 일일 10회 제한 체크 및 자정 초기화"""
+    if not email:
+        return False, "로그인이 필요합니다. (사용자 식별 불가)", 401
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            # 1. 사용자 정보 조회
+            cursor.execute("SELECT id, role, usage_count, last_use_date FROM users WHERE email = %s", (email,))
+            user = cursor.fetchone()
+
+            if not user:
+                return False, "등록되지 않은 사용자입니다.", 404
+
+            # 2. admin은 무제한 허용
+            if user['role'] == 'admin':
+                return True, "admin", 200
+
+            # 3. Lazy Reset: 마지막 사용일이 오늘이 아니면 카운트 0 초기화
+            from datetime import datetime
+            today = datetime.now().date()
+            last_date = user['last_use_date']
+            usage_count = user['usage_count'] or 0
+
+            if last_date != today:
+                usage_count = 0
+                cursor.execute("UPDATE users SET usage_count = 0, last_use_date = %s WHERE id = %s",
+                               (today, user['id']))
+                connection.commit()
+
+            # 4. 사용 횟수 제한 (10회)
+            if usage_count >= 10:
+                return False, "일일 AI 이미지 기능 사용 한도(10회)를 모두 소진했습니다. 내일 다시 이용해주세요.", 403
+
+            return True, user['id'], 200
+    except Exception as e:
+        logger.error(f"Usage Limit Check Error: {e}")
+        return False, "사용량 검증 중 오류가 발생했습니다.", 500
+    finally:
+        if connection: connection.close()
+
+def increment_usage(user_id):
+    """이미지 생성 성공 시 사용 횟수 1 증가"""
+    if not isinstance(user_id, int): return  # admin이거나 에러면 패스
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        with connection.cursor() as cursor:
+            cursor.execute("UPDATE users SET usage_count = usage_count + 1 WHERE id = %s", (user_id,))
+            connection.commit()
+    except Exception as e:
+        logger.error(f"Usage Increment Error: {e}")
     finally:
         if connection: connection.close()
 
