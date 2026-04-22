@@ -526,6 +526,17 @@ def generate_auto_banner():
         if not isinstance(data, dict):
             raise ValueError("JSON 데이터가 dict가 아님")
 
+        # =======================================================
+        # [⭐ 추가됨] 권한 및 일일 횟수 체크
+        # =======================================================
+        email = data.get("email")
+        allowed, user_or_msg, status_code = check_usage_limit(email)
+
+        if not allowed:
+            logger.warning(f"⚠️ 권한 제한: {user_or_msg}")
+            return jsonify({"error": user_or_msg}), status_code
+        # =======================================================
+
         raw_input = str(data.get("prompt", "")).strip()
         size_input = str(data.get("size", "1480x600"))
 
@@ -658,6 +669,11 @@ def generate_auto_banner():
 
         logger.info("✅ 이미지 저장 완료")
 
+        # =======================================================
+        # [⭐ 추가됨] 기능이 완벽히 수행되었을 때만 카운트 증가
+        # =======================================================
+        increment_usage(user_or_msg)
+
         logger.info("===== 🟢 SUCCESS =====")
 
         return jsonify({
@@ -674,7 +690,6 @@ def generate_auto_banner():
             "error": "서버 내부 오류",
             "detail": str(e)
         }), 500
-
 
 # ---------------------------
 # [엔드포인트] 진정한 범용 정밀 수정 (배경/사물 모드 자동 스위칭 완결판)
@@ -1638,8 +1653,8 @@ def check_usage_limit(email):
 def increment_usage(user_id):
     """이미지 생성 성공 시 사용 횟수 1 증가"""
     # 자료형 검사(int) 대신 값 비교로 변경하여 id가 문자열로 넘어오는 경우 방어
-    if str(user_id) == "admin": 
-        return  
+    if str(user_id) == "admin":
+        return
 
     connection = None
     try:
