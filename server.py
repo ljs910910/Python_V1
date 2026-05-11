@@ -43,7 +43,7 @@ SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 SENDER_PW = os.environ.get("SENDER_PW")
 
 # Render 프로젝트 URL
-RENDER_EXTERNAL_URL = "https://python-v1-1.onrender.com"
+RENDER_EXTERNAL_URL = "https://python-v1-2.onrender.com"
 
 # [로그 설정]
 LOG_FILE = "chat_history.log"
